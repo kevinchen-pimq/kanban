@@ -256,6 +256,50 @@ export const importBoard = internalMutation({
   },
 });
 
+/**
+ * Delete whole epics along with every ticket in them.
+ *
+ * This is the "take this column off the board" operation. Checkpoint rows are
+ * left alone, since they are shared by every epic.
+ */
+export const removeEpics = internalMutation({
+  args: { codes: v.array(v.string()) },
+  returns: v.object({
+    epicsDeleted: v.number(),
+    ticketsDeleted: v.number(),
+    missing: v.array(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    let epicsDeleted = 0;
+    let ticketsDeleted = 0;
+    const missing: string[] = [];
+
+    const doomed = new Set<Id<"epics">>();
+    for (const code of args.codes) {
+      const epic = await ctx.db
+        .query("epics")
+        .withIndex("by_code", (q) => q.eq("code", code))
+        .unique();
+      if (epic) doomed.add(epic._id);
+      else missing.push(code);
+    }
+
+    if (doomed.size > 0) {
+      for (const ticket of await ctx.db.query("tickets").take(5000)) {
+        if (!doomed.has(ticket.epicId)) continue;
+        await ctx.db.delete(ticket._id);
+        ticketsDeleted++;
+      }
+      for (const epicId of doomed) {
+        await ctx.db.delete(epicId);
+        epicsDeleted++;
+      }
+    }
+
+    return { epicsDeleted, ticketsDeleted, missing };
+  },
+});
+
 /** Delete specific tickets by their key. Missing keys are reported, not fatal. */
 export const removeTickets = internalMutation({
   args: { keys: v.array(v.string()) },

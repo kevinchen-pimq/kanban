@@ -10,7 +10,6 @@
 
 import type * as board from "../board.js";
 import type * as data from "../data.js";
-import type * as seed from "../seed.js";
 
 import type {
   ApiFromModules,
@@ -21,7 +20,6 @@ import type {
 declare const fullApi: ApiFromModules<{
   board: typeof board;
   data: typeof data;
-  seed: typeof seed;
 }>;
 
 /**
