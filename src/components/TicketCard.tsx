@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
 export function TicketCard({ ticket, today }: { ticket: Ticket; today: string }) {
   const status = STATUS_STYLES[ticket.status];
   const overdue = isOverdue(ticket, today);
-  const hasMeta = Boolean(ticket.tag || ticket.dueDate || ticket.githubPr);
+  const prs = ticket.githubPrs ?? [];
+  const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0);
 
   return (
     <article
@@ -58,17 +59,18 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
               <span>{formatDueDate(ticket.dueDate)}</span>
             </span>
           )}
-          {ticket.githubPr && (
+          {prs.map((pr) => (
             <a
-              href={ticket.githubPr}
+              key={pr}
+              href={pr}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
             >
               <GitPullRequest className="size-2.5" aria-hidden />
-              <span>{prLabel(ticket.githubPr)}</span>
+              <span>{prLabel(pr)}</span>
             </a>
-          )}
+          ))}
         </div>
       )}
 

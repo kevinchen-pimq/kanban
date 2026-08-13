@@ -39,7 +39,7 @@ const ticketDoc = v.object({
   checkpointId: v.id("checkpoints"),
   status: statusValidator,
   dueDate: v.optional(v.string()),
-  githubPr: v.optional(v.string()),
+  githubPrs: v.optional(v.array(v.string())),
   tag: v.optional(v.string()),
   assignee: v.optional(v.string()),
 });

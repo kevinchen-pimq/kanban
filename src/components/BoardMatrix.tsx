@@ -11,7 +11,15 @@ import { cn } from "@/lib/utils";
  * Width of the rotated checkpoint gutter. Narrow like a spreadsheet's row
  * header, since the label reads vertically and costs no horizontal room.
  */
-const GUTTER = "w-12 min-w-12";
+const GUTTER_PX = 48;
+
+/**
+ * Every epic column is exactly this wide. The table is sized from the column
+ * count rather than stretched to the container, so a board with one epic gets
+ * the same readable card width as a board with six, and extra epics scroll
+ * horizontally instead of squeezing.
+ */
+const COLUMN_PX = 300;
 
 export function BoardMatrix({
   epics,
@@ -39,21 +47,25 @@ export function BoardMatrix({
   }
 
   return (
-    <table className="w-full min-w-[1000px] border-collapse text-left">
+    // table-fixed plus an explicit width makes the column sizes exact rather
+    // than a hint the browser may stretch when there is spare room.
+    <table
+      className="table-fixed border-collapse text-left"
+      style={{ width: GUTTER_PX + epics.length * COLUMN_PX }}
+    >
       <thead>
         <tr>
           <th
-            className={cn(
-              "sticky top-0 left-0 z-40 border-r border-b border-slate-200 bg-slate-100",
-              GUTTER,
-            )}
+            style={{ width: GUTTER_PX }}
+            className="sticky top-0 left-0 z-40 border-r border-b border-slate-200 bg-slate-100"
           >
             <span className="sr-only">週 Checkpoint</span>
           </th>
           {epics.map((epic) => (
             <th
               key={epic._id}
-              className="sticky top-0 z-30 min-w-[260px] border-r border-b border-slate-200 bg-slate-50 p-3.5"
+              style={{ width: COLUMN_PX }}
+              className="sticky top-0 z-30 border-r border-b border-slate-200 bg-slate-50 p-3.5"
             >
               <div className="flex items-center justify-between gap-2">
                 <span
@@ -81,9 +93,9 @@ export function BoardMatrix({
             >
               <th
                 scope="row"
+                style={{ width: GUTTER_PX }}
                 className={cn(
                   "sticky left-0 z-20 border-r border-b border-slate-200 bg-white p-0",
-                  GUTTER,
                   isCurrent && "border-l-4 border-l-indigo-600",
                 )}
               >

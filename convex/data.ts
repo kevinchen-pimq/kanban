@@ -43,7 +43,7 @@ const ticketInput = v.object({
   checkpoint: checkpointRefValidator,
   status: statusValidator,
   dueDate: v.optional(v.string()),
-  githubPr: v.optional(v.string()),
+  githubPrs: v.optional(v.array(v.string())),
   tag: v.optional(v.string()),
   assignee: v.optional(v.string()),
 });
@@ -213,7 +213,7 @@ export const importBoard = internalMutation({
         checkpointId,
         status: ticket.status,
         dueDate: ticket.dueDate,
-        githubPr: ticket.githubPr,
+        githubPrs: ticket.githubPrs,
         tag: ticket.tag,
         assignee: ticket.assignee,
       };

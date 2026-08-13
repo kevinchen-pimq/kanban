@@ -20,7 +20,8 @@
  *     "checkpoints": [{ "kind": "week"|"backlog", "weekNumber"?, "startDate"?,
  *                       "endDate"?, "label"?, "order"? }],
  *     "tickets":     [{ "key", "title", "epicCode", "checkpoint": <week#|"backlog">,
- *                       "status"|"jiraStatus", "tag", "dueDate"?, "assignee" }],
+ *                       "status"|"jiraStatus", "assignee"?, "dueDate"?,
+ *                       "githubPrs"?: [url], "tag"? }],
  *     "pruneEpics":  ["EPIC-CODE"]
  *   }
  *
@@ -101,8 +102,16 @@ const tickets = (raw.tickets ?? []).map((ticket, i) => {
   if (seen.has(ticket.key)) fail(where, "duplicate key in this payload");
   seen.add(ticket.key);
 
-  if (ticket.githubPr !== undefined && !/^https:\/\/github\.com\/.+/.test(ticket.githubPr)) {
-    fail(where, `githubPr must be a https://github.com/... URL, got ${JSON.stringify(ticket.githubPr)}`);
+  if (ticket.githubPrs !== undefined) {
+    if (!Array.isArray(ticket.githubPrs)) {
+      fail(where, "githubPrs must be an array of pull request URLs");
+    } else {
+      for (const pr of ticket.githubPrs) {
+        if (!/^https:\/\/github\.com\/.+\/pull\/\d+$/.test(pr)) {
+          fail(where, `githubPrs entry must be a .../pull/<n> URL, got ${JSON.stringify(pr)}`);
+        }
+      }
+    }
   }
 
   if (
@@ -133,7 +142,7 @@ const tickets = (raw.tickets ?? []).map((ticket, i) => {
     checkpoint: ticket.checkpoint,
     status,
     ...(ticket.dueDate ? { dueDate: ticket.dueDate } : {}),
-    ...(ticket.githubPr ? { githubPr: ticket.githubPr } : {}),
+    ...(ticket.githubPrs?.length ? { githubPrs: ticket.githubPrs } : {}),
     ...(ticket.tag ? { tag: ticket.tag } : {}),
     ...(ticket.assignee ? { assignee: ticket.assignee } : {}),
   };

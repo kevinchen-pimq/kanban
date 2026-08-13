@@ -71,8 +71,9 @@ export default defineSchema({
     status: statusValidator,
     // ISO calendar date, "YYYY-MM-DD". Absent means no due date.
     dueDate: v.optional(v.string()),
-    // Full URL of the pull request that carries this ticket's work.
-    githubPr: v.optional(v.string()),
+    // Pull requests that reference this ticket's key, oldest first. A ticket
+    // can span several, so this is a list rather than a single URL.
+    githubPrs: v.optional(v.array(v.string())),
     // Both optional: the Jira import carries neither, and the card simply
     // omits whichever is missing.
     tag: v.optional(v.string()),
