@@ -52,7 +52,7 @@ npm run deploy:dev
 
 ### 兩個刻意的設計決定
 
-**「本週」是算出來的,不是存的。** checkpoint 只存起訖日期,`src/lib/board.ts` 的 `describeCheckpoints()` 用今天的日期判斷哪一列是「本週主推」,相鄰的則標為「前週完成」與「下週預計」。所以每週不需要手動改資料。相鄰關係是用日期距離推出來的,即使中間缺了某一週,標示仍然正確。
+**「本週」是算出來的,不是存的。** checkpoint 只存起訖日期,`src/lib/board.ts` 的 `describeCheckpoints()` 用今天的日期判斷每一列的相對位置(`current` / `previous` / `next` / `past` / `future` / `backlog`),看板據此把本週那一列標成靛藍色左邊框並淡染背景。所以每週不需要手動改資料。相鄰關係是用日期距離推出來的,即使中間缺了某一週,判斷仍然正確。
 
 注意 `weekNumber` 是團隊自己的 checkpoint 編號,**不是 ISO 週號**(W31 對應的 ISO 週其實是 32),而且一週的區間是週二到週一 —— 所以編號用存的,不用算的。
 
@@ -66,6 +66,14 @@ npm run deploy:dev
 | 藍 | `doing` | Doing |
 | 黃 | `testing` | Test and Review / Dev Done |
 | 綠 | `done` | Dev Test Done / Done |
+
+## 版面
+
+Header 固定 105px,分兩層:標題列與工具列(搜尋、狀態多選、負責人、重置)。
+
+Y 軸的週欄位是 48px 寬的窄邊欄,標籤以 `writing-mode: vertical-rl` 轉 90 度顯示,讓週次資訊只佔垂直空間、把水平空間全部留給卡片。中文標籤必須同時設 `text-orientation: sideways`,否則預設會維持直立字形,再套 `rotate-180` 就會上下顛倒。
+
+狀態篩選是多選:不勾選代表不過濾(顯示全部),勾選則只顯示選中的狀態。選單每一項都是「燈號 + 完整狀態名稱」,所以它同時是四個燈號的圖例。
 
 ## 專案結構
 

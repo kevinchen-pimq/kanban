@@ -4,17 +4,20 @@ import { useMemo, useState } from "react";
 import { BoardHeader, type StatusFilter } from "@/components/BoardHeader";
 import { BoardMatrix } from "@/components/BoardMatrix";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { matchesSearch } from "@/lib/board";
+import { matchesSearch, type TicketStatus } from "@/lib/board";
 import { todayIso } from "@/lib/dates";
 import { api } from "../convex/_generated/api";
 
 /** Phase 1 shows a single owner's board; the filter chip is informational. */
 const BOARD_OWNER = "frank";
 
+const NO_STATUS_FILTER: ReadonlySet<TicketStatus> = new Set();
+
 export default function App() {
   const board = useQuery(api.board.get);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [statusFilter, setStatusFilter] =
+    useState<StatusFilter>(NO_STATUS_FILTER);
 
   // Recomputed only when the data or the filters change, not on every render.
   const today = useMemo(() => todayIso(), []);
@@ -24,7 +27,7 @@ export default function App() {
     return board.tickets.filter(
       (ticket) =>
         matchesSearch(ticket, search) &&
-        (statusFilter === "ALL" || ticket.status === statusFilter),
+        (statusFilter.size === 0 || statusFilter.has(ticket.status)),
     );
   }, [board, search, statusFilter]);
 
@@ -38,7 +41,7 @@ export default function App() {
           onStatusFilterChange={setStatusFilter}
           onReset={() => {
             setSearch("");
-            setStatusFilter("ALL");
+            setStatusFilter(NO_STATUS_FILTER);
           }}
           visibleCount={visibleTickets.length}
           assignee={BOARD_OWNER}

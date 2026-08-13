@@ -1,24 +1,24 @@
-import { Info, LayoutGrid, RotateCcw, Search } from "lucide-react";
+import { ChevronDown, LayoutGrid, RotateCcw, Search } from "lucide-react";
 
 import { StatusDot } from "@/components/StatusDot";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  initials,
-  STATUS_ORDER,
-  STATUS_STYLES,
-  type TicketStatus,
-} from "@/lib/board";
+import { initials, STATUS_ORDER, STATUS_STYLES, type TicketStatus } from "@/lib/board";
 
-export type StatusFilter = TicketStatus | "ALL";
+/** An empty selection means "no status filter", i.e. every status is shown. */
+export type StatusFilter = ReadonlySet<TicketStatus>;
+
+/** Two 52px tiers plus a hairline, matching the requested 105px header. */
+const TIER = "flex h-[52px] shrink-0 items-center gap-3 px-6";
 
 export function BoardHeader({
   search,
@@ -37,41 +37,35 @@ export function BoardHeader({
   visibleCount: number;
   assignee: string;
 }) {
-  return (
-    <header className="border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-      <div className="flex max-w-full flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-indigo-600 p-2 text-white shadow">
-            <LayoutGrid className="size-[18px]" aria-hidden />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Epic × Checkpoint 看板
-            </h1>
-            <p className="text-xs text-slate-500">
-              以 Epic 為欄、週 Checkpoint 為列的全新可視化模式
-            </p>
-          </div>
-        </div>
+  const toggleStatus = (status: TicketStatus) => {
+    const next = new Set(statusFilter);
+    if (next.has(status)) next.delete(status);
+    else next.add(status);
+    onStatusFilterChange(next);
+  };
 
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs">
-          <span className="mr-1 flex items-center gap-1 font-semibold text-slate-600">
-            <Info className="size-3.5 text-slate-400" aria-hidden />
-            狀態指示燈:
-          </span>
-          {STATUS_ORDER.map((status) => (
-            <div key={status} className="flex items-center gap-1.5">
-              <StatusDot status={status} />
-              <span className="font-medium text-slate-700">
-                {STATUS_STYLES[status].label}
-              </span>
-            </div>
-          ))}
+  const selectedLabel =
+    statusFilter.size === 0
+      ? "所有狀態 (All Status)"
+      : STATUS_ORDER.filter((status) => statusFilter.has(status))
+          .map((status) => STATUS_STYLES[status].shortLabel)
+          .join("、");
+
+  return (
+    <header className="h-[105px] shrink-0 border-b border-slate-200 bg-white">
+      <div className={TIER}>
+        <div className="rounded-lg bg-indigo-600 p-1.5 text-white shadow-sm">
+          <LayoutGrid className="size-[18px]" aria-hidden />
         </div>
+        <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">
+          Epic × Checkpoint 看板
+        </h1>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="mx-6 border-t border-slate-100" />
+
+      <div className={`${TIER} justify-between`}>
+        <div className="flex items-center gap-3">
           <div className="relative">
             <Search
               className="pointer-events-none absolute top-1/2 left-3 size-3 -translate-y-1/2 text-slate-400"
@@ -86,26 +80,44 @@ export function BoardHeader({
             />
           </div>
 
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => onStatusFilterChange(value as StatusFilter)}
-          >
-            <SelectTrigger
-              size="sm"
-              aria-label="狀態篩選"
-              className="border-slate-300 bg-slate-50 text-xs"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">所有狀態 (All Status)</SelectItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="狀態篩選"
+                className="h-8 max-w-64 justify-between gap-2 border-slate-300 bg-slate-50 text-xs font-normal"
+              >
+                <span className="truncate">{selectedLabel}</span>
+                <ChevronDown className="size-3.5 shrink-0 opacity-50" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-60">
               {STATUS_ORDER.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {STATUS_STYLES[status].filterLabel}
-                </SelectItem>
+                <DropdownMenuCheckboxItem
+                  key={status}
+                  checked={statusFilter.has(status)}
+                  // Keep the menu open so several statuses can be picked at once.
+                  onSelect={(event) => event.preventDefault()}
+                  onCheckedChange={() => toggleStatus(status)}
+                  className="text-xs"
+                >
+                  <span className="flex items-center gap-2">
+                    <StatusDot status={status} />
+                    {STATUS_STYLES[status].label}
+                  </span>
+                </DropdownMenuCheckboxItem>
               ))}
-            </SelectContent>
-          </Select>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-xs"
+                disabled={statusFilter.size === 0}
+                onSelect={() => onStatusFilterChange(new Set())}
+              >
+                顯示所有狀態
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 shadow-sm">
             <Avatar className="size-5">

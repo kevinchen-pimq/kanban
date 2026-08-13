@@ -5,16 +5,15 @@ export type Epic = Doc<"epics">;
 export type Checkpoint = Doc<"checkpoints">;
 export type Ticket = Doc<"tickets">;
 export type TicketStatus = Ticket["status"];
-export type EpicAccent = Epic["accent"];
 
 /** Order the status filter and legend are presented in. */
 export const STATUS_ORDER = ["todo", "doing", "testing", "done"] as const;
 
 type StatusStyle = {
-  /** Full label, used by the legend and the card's dot tooltip. */
+  /** Full label, used by the legend, the filter menu and the dot tooltip. */
   label: string;
-  /** Label with its colour cue, used inside the filter dropdown. */
-  filterLabel: string;
+  /** Short label, used where the toolbar has no room for the full one. */
+  shortLabel: string;
   /** Classes for the coloured status dot. */
   dot: string;
   /** Border colour a card takes on hover. */
@@ -24,39 +23,28 @@ type StatusStyle = {
 export const STATUS_STYLES: Record<TicketStatus, StatusStyle> = {
   todo: {
     label: "To Do / Backlog",
-    filterLabel: "⚪ To Do / Backlog",
+    shortLabel: "To Do",
     dot: "bg-slate-400 ring-2 ring-slate-200",
     cardHover: "hover:border-slate-400",
   },
   doing: {
     label: "Doing",
-    filterLabel: "🔵 Doing",
+    shortLabel: "Doing",
     dot: "bg-blue-500 ring-2 ring-blue-200 animate-pulse",
     cardHover: "hover:border-blue-400",
   },
   testing: {
     label: "Testing & Review / Dev Done",
-    filterLabel: "🟡 Testing / Dev Done",
+    shortLabel: "Testing",
     dot: "bg-amber-400 ring-2 ring-amber-200",
     cardHover: "hover:border-amber-400",
   },
   done: {
     label: "Dev Test Done / Done",
-    filterLabel: "🟢 Done / Test Done",
+    shortLabel: "Done",
     dot: "bg-emerald-500 ring-2 ring-emerald-200",
     cardHover: "hover:border-emerald-400",
   },
-};
-
-/**
- * Epic badge palettes. Written as whole class strings rather than composed from
- * the accent name so Tailwind's scanner can see every class it must emit.
- */
-export const EPIC_ACCENT_CLASSES: Record<EpicAccent, string> = {
-  indigo: "bg-indigo-100 text-indigo-700 border-indigo-200",
-  purple: "bg-purple-100 text-purple-700 border-purple-200",
-  cyan: "bg-cyan-100 text-cyan-700 border-cyan-200",
-  emerald: "bg-emerald-100 text-emerald-700 border-emerald-200",
 };
 
 /** Where a checkpoint sits relative to today. */
@@ -68,15 +56,6 @@ export type CheckpointPhase =
   | "future"
   | "backlog";
 
-const PHASE_BADGES: Record<CheckpointPhase, string> = {
-  past: "已過週次",
-  previous: "前週完成",
-  current: "本週主推",
-  next: "下週預計",
-  future: "未來週次",
-  backlog: "長期待辦",
-};
-
 export type CheckpointView = {
   checkpoint: Checkpoint;
   phase: CheckpointPhase;
@@ -84,7 +63,6 @@ export type CheckpointView = {
   title: string;
   /** Muted row subtitle, e.g. "Checkpoint (08/11 - 08/17)". */
   subtitle: string;
-  badge: string;
 };
 
 /**
@@ -149,7 +127,6 @@ export function describeCheckpoints(
         phase,
         title,
         subtitle: rest.join(" / ") || "Backlog Pool",
-        badge: PHASE_BADGES[phase],
       };
     }
 
@@ -163,7 +140,6 @@ export function describeCheckpoints(
       phase,
       title: `W${checkpoint.weekNumber}`,
       subtitle: range ? `Checkpoint (${range})` : "Checkpoint",
-      badge: PHASE_BADGES[phase],
     };
   });
 }
