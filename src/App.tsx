@@ -1,5 +1,6 @@
 import { useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   BoardHeader,
@@ -11,25 +12,69 @@ import type { FilterOption } from "@/components/MultiSelectFilter";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initials, matchesSearch, type TicketStatus } from "@/lib/board";
-import { todayIso } from "@/lib/dates";
+import { todayIso, weeksBefore } from "@/lib/dates";
 import { api } from "../convex/_generated/api";
 
 const NO_STATUS_FILTER: ReadonlySet<TicketStatus> = new Set();
 const NO_ASSIGNEE_FILTER: ReadonlySet<string | null> = new Set();
 
+/** Weeks shown on first paint, and how many more each scroll-up adds. */
+const INITIAL_WEEKS = 8;
+const LOAD_STEP_WEEKS = 8;
+
+/** How close to the top counts as "asking for older weeks", in pixels. */
+const LOAD_TRIGGER_PX = 240;
+
 export default function App() {
-  const board = useQuery(api.board.get);
+  const today = useMemo(() => todayIso(), []);
+  const [fromDate, setFromDate] = useState(() =>
+    weeksBefore(todayIso(), INITIAL_WEEKS),
+  );
+
+  const live = useQuery(api.board.get, { fromDate });
+
+  // Convex returns undefined while a new window loads. Keep painting the last
+  // board so scrolling up widens the range instead of blanking the matrix.
+  const lastBoard = useRef<typeof live>(undefined);
+  if (live !== undefined) lastBoard.current = live;
+  const board = live ?? lastBoard.current;
+  const loadingOlder = live === undefined && lastBoard.current !== undefined;
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Distance from the bottom, captured before older rows are prepended.
+  const anchorFromBottom = useRef<number | null>(null);
+
+  const loadOlder = useCallback(() => {
+    const el = scrollerRef.current;
+    if (el) anchorFromBottom.current = el.scrollHeight - el.scrollTop;
+    setFromDate((current) => weeksBefore(current, LOAD_STEP_WEEKS));
+  }, []);
+
+  // Prepending rows grows the scroll height above the viewport, which would
+  // otherwise throw the reader back down the page. Restore the same distance
+  // from the bottom so the rows they were reading stay put.
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || anchorFromBottom.current === null || live === undefined) return;
+    el.scrollTop = el.scrollHeight - anchorFromBottom.current;
+    anchorFromBottom.current = null;
+  }, [live]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el || !board?.hasOlder) return;
+    if (anchorFromBottom.current !== null) return; // a widen is already in flight
+    if (el.scrollTop < LOAD_TRIGGER_PX) loadOlder();
+  }, [board?.hasOlder, loadOlder]);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>(NO_STATUS_FILTER);
   const [assigneeFilter, setAssigneeFilter] =
     useState<AssigneeFilter>(NO_ASSIGNEE_FILTER);
 
-  // Recomputed only when the data or the filters change, not on every render.
-  const today = useMemo(() => todayIso(), []);
-
-  // Offer exactly the assignees present on the board, so the menu can never
-  // list someone with nothing to show. `null` covers unassigned tickets.
+  // Offer exactly the assignees present in the loaded window, so the menu can
+  // never list someone with nothing to show. `null` covers unassigned tickets.
   const assigneeOptions = useMemo<FilterOption<string | null>[]>(() => {
     if (!board) return [];
     const names = new Set<string>();
@@ -89,7 +134,11 @@ export default function App() {
         />
 
         <main className="min-h-0 flex-1 p-4 md:p-6">
-          <div className="h-full overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div
+            ref={scrollerRef}
+            onScroll={handleScroll}
+            className="h-full overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm"
+          >
             {board === undefined ? (
               <BoardStatus>載入中...</BoardStatus>
             ) : board.epics.length === 0 ? (
@@ -99,19 +148,33 @@ export default function App() {
                 匯入看板內容。
               </BoardStatus>
             ) : (
-              <BoardMatrix
-                epics={board.epics}
-                checkpoints={board.checkpoints}
-                tickets={visibleTickets}
-                today={today}
-              />
+              <>
+                {board.hasOlder && (
+                  <div className="flex items-center justify-center gap-2 border-b border-slate-100 py-2 text-xs text-slate-400">
+                    {loadingOlder ? (
+                      <>
+                        <Loader2 className="size-3 animate-spin" aria-hidden />
+                        載入更早的週次...
+                      </>
+                    ) : (
+                      "往上捲動載入更早的週次"
+                    )}
+                  </div>
+                )}
+                <BoardMatrix
+                  epics={board.epics}
+                  checkpoints={board.checkpoints}
+                  tickets={visibleTickets}
+                  today={today}
+                />
+              </>
             )}
           </div>
         </main>
 
         {board?.truncated && (
           <p className="border-t border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-700">
-            工單數量超過單次查詢上限,部分卡片未顯示。
+            工單數量超過單次查詢上限,部分卡片未顯示。縮小時間範圍可以看到完整內容。
           </p>
         )}
       </div>

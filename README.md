@@ -73,7 +73,7 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
     "checkpoint": 34,            // 週號,或 "backlog"
     "jiraStatus": "Dev Done",    // 或直接給 status: "testing"
     "dueDate": "2026-08-31",     // 以下皆可省略
-    "githubPr": "https://github.com/owner/repo/pull/9097",
+    "githubPrs": ["https://github.com/owner/repo/pull/9097"],
     "tag": "BE",
     "assignee": "alice"
   }],
@@ -85,7 +85,7 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
 
 `pruneEpics` 讓 payload 成為那些 epic 的完整事實:沒列在 payload 裡的 ticket 會被刪除。要做單一 epic 的全量重新同步就用它;只想補幾張卡就別加。
 
-`dueDate` / `githubPr` / `tag` / `assignee` 都是選填,**沒給就會被清掉**(不是保留舊值),所以 payload 永遠是那張卡的完整事實。卡片會自動省略缺席的欄位。
+`dueDate` / `githubPrs` / `tag` / `assignee` 都是選填,**沒給就會被清掉**(不是保留舊值),所以 payload 永遠是那張卡的完整事實。卡片會自動省略缺席的欄位。
 
 ### 從 Jira 匯入
 
@@ -99,15 +99,23 @@ parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下�
 
 一張票可能出現在多個週視窗(被打回後再次切 Dev Done),此時取**最後**一次 —— 那是真正生效的那一次。從未進過 Dev Done 的票留在 backlog 列。
 
-**已知缺口 —— `githubPr` 目前全部是空的。** Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),而程式碼所在的 repo 與本看板 repo 屬於不同 owner,同一個 session 無法同時掛載。要補這個欄位,可以從 repo 端以票號比對 PR,或直接在 payload 裡手寫。
+**PR 連結的來源**:Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),`gh` CLI 沒安裝,直接打 api.github.com 也被 proxy 擋(403)。可行的是 GitHub MCP 的 PR 搜尋,它可以直接指定 repo,不需要 `add_repo`(後者拒絕跨 owner 掛載):
+
+```
+repo:<owner>/<repo> "ABC-0000"
+```
+
+**票號一定要加引號。** 不加引號時 GitHub 會把 `ABC-0000` 拆成 `ca` + `15893`,曾誤中一個早於該票、不可能引用它的 PR #7314。
+
+搜到的是「內文提及該票號」的 PR,不等於「實作它」的 PR,而且一張票可能對到多個(所以欄位是 `githubPrs` 陣列)。
 
 ## 資料模型
 
 `convex/schema.ts` 三張表:
 
 - **`epics`** — X 軸的欄。`code`(如 `DEMO-BOARD`)、`name`、`accent` 顏色鍵、`order` 決定左右順序。
-- **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`;週別存 `weekNumber` 與 `startDate`/`endDate`(ISO 日期字串)。
-- **`tickets`** — 卡片。以 `epicId` + `checkpointId` 決定落在哪一格,`status` 是四個燈號之一。`assignee` / `dueDate` / `githubPr` / `tag` 皆為選填。
+- **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`;週別存 `weekNumber` 與 `startDate`/`endDate`(ISO 日期字串)。**列的順序由日期推導**,不看 payload 給的 `order` —— 週次有真實日期,從日期排就不可能因為匯入時 `order` 給錯而排亂(這個錯我自己踩過)。backlog 永遠在最後。
+- **`tickets`** — 卡片。以 `epicId` + `checkpointId` 決定落在哪一格,`status` 是四個燈號之一。`assignee` / `dueDate` / `githubPrs` / `tag` 皆為選填。
 
 ### 兩個刻意的設計決定
 
@@ -126,6 +134,15 @@ parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下�
 | 黃 | `testing` | Test and Review / Dev Done |
 | 綠 | `done` | Dev Test Done / Done |
 
+## 時間區間與 lazy loading
+
+`board.get` 收一個 `fromDate`(ISO 日期),只回傳**結束日在該日之後**的週次列與這些列的卡片,並附上 `hasOlder` 告訴前端還有沒有更早的資料。卡片是逐 checkpoint 走索引取,不是整張表掃出來再過濾,所以成本跟著視窗大小而不是資料總量。
+
+前端首次只載入近 8 週。捲到接近頂端時再往前拉 8 週,`hasOlder` 變 false 就停止請求。兩個實作細節:
+
+- **維持捲動位置**:往上補列會讓 `scrollHeight` 變大,若不處理,讀者會被推到頁面下方。所以在請求前記下「距底距離」,DOM 更新後用 `useLayoutEffect` 還原,原本在看的那幾列就留在原處。
+- **不閃白**:Convex 的 `useQuery` 在參數改變時會先回 `undefined`。直接用會讓整個看板在載入更早週次時消失一瞬間,所以保留上一次的結果繼續畫,只在頂端顯示載入中。
+
 ## 版面
 
 Header 固定 105px,分兩層:標題列與工具列(搜尋、狀態多選、負責人、重置)。
@@ -141,7 +158,7 @@ Y 軸的週欄位是 48px 寬的窄邊欄,標籤以 `writing-mode: vertical-rl` 
 ```
 convex/
   schema.ts          資料表與共用 validator
-  board.ts           board:get — 看板的單一 reactive query
+  board.ts           board:get — 依時間區間回傳看板的單一 reactive query
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
   convex.config.ts   掛載 static-hosting component
 scripts/
@@ -149,6 +166,7 @@ scripts/
   jira-status.mjs    Jira 狀態名稱 → 四個燈號
 data/
   example-epic.json      從 Jira epic ABC-0000 匯出的 27 張工單
+  example-epic.WIP.json  ABC-0000 的匯出進度(未完成,勿匯入)
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具(以字串比較避開時區偏移)

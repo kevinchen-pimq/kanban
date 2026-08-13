@@ -34,3 +34,13 @@ export function formatDueDate(iso: string): string {
 export function isBefore(a: string, b: string): boolean {
   return a < b;
 }
+
+/**
+ * Shift an ISO date back by whole weeks. Built on UTC arithmetic so a DST
+ * boundary cannot move the result onto the wrong day.
+ */
+export function weeksBefore(iso: string, weeks: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day - weeks * 7));
+  return shifted.toISOString().slice(0, 10);
+}

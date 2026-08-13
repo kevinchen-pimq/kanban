@@ -37,6 +37,9 @@ export const JIRA_STATUS_TO_LIGHT = {
   // 綠 — Dev Test Done / Done
   "dev test done": "done",
   done: "done",
+  // Jira puts "Not Applicable" in the Done status category: the work is
+  // settled and will not come back, so it reads as finished on the board.
+  "not applicable": "done",
   closed: "done",
   resolved: "done",
   complete: "done",
