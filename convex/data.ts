@@ -42,9 +42,10 @@ const ticketInput = v.object({
   epicCode: v.string(),
   checkpoint: checkpointRefValidator,
   status: statusValidator,
-  tag: v.string(),
   dueDate: v.optional(v.string()),
-  assignee: v.string(),
+  githubPr: v.optional(v.string()),
+  tag: v.optional(v.string()),
+  assignee: v.optional(v.string()),
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -204,15 +205,16 @@ export const importBoard = internalMutation({
       seenKeys.add(ticket.key);
       touchedEpicIds.add(epicId);
 
+      // Every optional field is written even when absent, so a value removed
+      // upstream is cleared here rather than lingering from an earlier import.
       const fields = {
         title: ticket.title,
         epicId,
         checkpointId,
         status: ticket.status,
-        tag: ticket.tag,
-        // Absent means "no due date", so patch it away rather than keeping a
-        // stale one from a previous import.
         dueDate: ticket.dueDate,
+        githubPr: ticket.githubPr,
+        tag: ticket.tag,
         assignee: ticket.assignee,
       };
 

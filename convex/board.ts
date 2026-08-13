@@ -38,9 +38,10 @@ const ticketDoc = v.object({
   epicId: v.id("epics"),
   checkpointId: v.id("checkpoints"),
   status: statusValidator,
-  tag: v.string(),
   dueDate: v.optional(v.string()),
-  assignee: v.string(),
+  githubPr: v.optional(v.string()),
+  tag: v.optional(v.string()),
+  assignee: v.optional(v.string()),
 });
 
 /**

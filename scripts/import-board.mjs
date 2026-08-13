@@ -98,9 +98,12 @@ const tickets = (raw.tickets ?? []).map((ticket, i) => {
   if (!ticket.key) fail(where, "missing key");
   if (!ticket.title) fail(where, "missing title");
   if (!ticket.epicCode) fail(where, "missing epicCode");
-  if (!ticket.assignee) fail(where, "missing assignee");
   if (seen.has(ticket.key)) fail(where, "duplicate key in this payload");
   seen.add(ticket.key);
+
+  if (ticket.githubPr !== undefined && !/^https:\/\/github\.com\/.+/.test(ticket.githubPr)) {
+    fail(where, `githubPr must be a https://github.com/... URL, got ${JSON.stringify(ticket.githubPr)}`);
+  }
 
   if (
     typeof ticket.checkpoint !== "number" &&
@@ -129,9 +132,10 @@ const tickets = (raw.tickets ?? []).map((ticket, i) => {
     epicCode: ticket.epicCode,
     checkpoint: ticket.checkpoint,
     status,
-    tag: ticket.tag ?? "",
     ...(ticket.dueDate ? { dueDate: ticket.dueDate } : {}),
-    assignee: ticket.assignee,
+    ...(ticket.githubPr ? { githubPr: ticket.githubPr } : {}),
+    ...(ticket.tag ? { tag: ticket.tag } : {}),
+    ...(ticket.assignee ? { assignee: ticket.assignee } : {}),
   };
 });
 

@@ -68,8 +68,9 @@ npm run board                                                 # 看目前看板�
     "epicCode": "DEMO-BOARD",  // 對應 epics[].code
     "checkpoint": 34,            // 週號,或 "backlog"
     "jiraStatus": "Dev Done",    // 或直接給 status: "testing"
+    "dueDate": "2026-08-31",     // 以下皆可省略
+    "githubPr": "https://github.com/owner/repo/pull/9097",
     "tag": "BE",
-    "dueDate": "2026-08-31",     // 可省略
     "assignee": "alice"
   }],
   "pruneEpics": ["DEMO-BOARD"] // 刪掉這些 epic 底下、payload 沒提到的 ticket
@@ -80,9 +81,21 @@ npm run board                                                 # 看目前看板�
 
 `pruneEpics` 讓 payload 成為那些 epic 的完整事實:沒列在 payload 裡的 ticket 會被刪除。要做單一 epic 的全量重新同步就用它;只想補幾張卡就別加。
 
+`dueDate` / `githubPr` / `tag` / `assignee` 都是選填,**沒給就會被清掉**(不是保留舊值),所以 payload 永遠是那張卡的完整事實。卡片會自動省略缺席的欄位。
+
 ### 從 Jira 匯入
 
-Jira 那一段目前是手動的:我透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 就是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了它的來源與轉換規則。
+Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 就是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了來源與每一項轉換規則。
+
+**checkpoint 的判定**:目前不使用 Jira 的 sprint 欄位,而是看這張票**是在哪一週被切成 Dev Done**。用 JQL 逐週查:
+
+```
+parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下個週二>")
+```
+
+一張票可能出現在多個週視窗(被打回後再次切 Dev Done),此時取**最後**一次 —— 那是真正生效的那一次。從未進過 Dev Done 的票留在 backlog 列。
+
+**已知缺口 —— `githubPr` 目前全部是空的。** Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),而程式碼所在的 repo 與本看板 repo 屬於不同 owner,同一個 session 無法同時掛載。要補這個欄位,可以從 repo 端以票號比對 PR,或直接在 payload 裡手寫。
 
 ## 資料模型
 

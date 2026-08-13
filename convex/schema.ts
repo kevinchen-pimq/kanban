@@ -69,10 +69,14 @@ export default defineSchema({
     epicId: v.id("epics"),
     checkpointId: v.id("checkpoints"),
     status: statusValidator,
-    tag: v.string(),
     // ISO calendar date, "YYYY-MM-DD". Absent means no due date.
     dueDate: v.optional(v.string()),
-    assignee: v.string(),
+    // Full URL of the pull request that carries this ticket's work.
+    githubPr: v.optional(v.string()),
+    // Both optional: the Jira import carries neither, and the card simply
+    // omits whichever is missing.
+    tag: v.optional(v.string()),
+    assignee: v.optional(v.string()),
   })
     .index("by_key", ["key"])
     .index("by_checkpoint_and_epic", ["checkpointId", "epicId"]),
