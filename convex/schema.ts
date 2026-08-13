@@ -40,7 +40,10 @@ export default defineSchema({
     name: v.string(),
     accent: accentValidator,
     order: v.number(),
-  }).index("by_order", ["order"]),
+  })
+    // `code` is the natural key imports match on.
+    .index("by_code", ["code"])
+    .index("by_order", ["order"]),
 
   // Y axis: one row per checkpoint, top to bottom by `order`.
   checkpoints: defineTable({
@@ -54,7 +57,10 @@ export default defineSchema({
     // Present when kind === "backlog".
     label: v.optional(v.string()),
     order: v.number(),
-  }).index("by_order", ["order"]),
+  })
+    // Weeks are matched on their number; the backlog row is matched on kind.
+    .index("by_kind_and_week", ["kind", "weekNumber"])
+    .index("by_order", ["order"]),
 
   // Cards, each sitting in exactly one (checkpoint, epic) cell.
   tickets: defineTable({

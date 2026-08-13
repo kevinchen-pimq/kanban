@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "seed": "convex run seed:run",
+    "import": "node scripts/import-board.mjs",
+    "board": "convex run data:summary",
     "deploy": "node node_modules/@convex-dev/static-hosting/dist/cli/index.js deploy",
     "deploy:dev": "node node_modules/@convex-dev/static-hosting/dist/cli/index.js upload --build"
   },

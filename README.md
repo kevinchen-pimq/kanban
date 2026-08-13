@@ -42,6 +42,48 @@ npx convex run seed:run --prod
 npm run deploy:dev
 ```
 
+## 更新看板資料
+
+`seed:run` 只會重播原始的 PoC 範例,要放真實資料請用匯入流程。
+
+```bash
+node scripts/import-board.mjs data/example-epic.json --dry-run   # 只驗證,不寫入
+npm run import -- data/example-epic.json                          # 寫入 dev
+node scripts/import-board.mjs data/example-epic.json --prod       # 寫入 production
+npm run board                                                 # 看目前看板有什麼
+```
+
+匯入是**冪等**的 —— 以自然鍵比對後 upsert(epic 用 `code`、週用 `weekNumber`、backlog 用 kind、ticket 用 `key`),同一份檔案重跑幾次結果都一樣。認證走 Convex CLI,不需要 deploy key,也沒有任何對外開放的寫入端點(`convex/data.ts` 全是 internal function)。
+
+### payload 格式
+
+```jsonc
+{
+  "epics":       [{ "code": "DEMO-BOARD", "name": "…", "accent": "purple" }],
+  "checkpoints": [{ "kind": "week", "weekNumber": 34,
+                    "startDate": "2026-08-25", "endDate": "2026-08-31" }],
+  "tickets": [{
+    "key": "ABC-0000",           // 自然鍵
+    "title": "…",
+    "epicCode": "DEMO-BOARD",  // 對應 epics[].code
+    "checkpoint": 34,            // 週號,或 "backlog"
+    "jiraStatus": "Dev Done",    // 或直接給 status: "testing"
+    "tag": "BE",
+    "dueDate": "2026-08-31",     // 可省略
+    "assignee": "alice"
+  }],
+  "pruneEpics": ["DEMO-BOARD"] // 刪掉這些 epic 底下、payload 沒提到的 ticket
+}
+```
+
+`jiraStatus` 會透過 `scripts/jira-status.mjs` 對應到四個燈號之一。**沒對應到的狀態會直接讓匯入失敗**,而不是套用預設值 —— 靜默的預設會把真實工作丟進錯的燈號。Jira 出現新狀態時,把它加進那張表。
+
+`pruneEpics` 讓 payload 成為那些 epic 的完整事實:沒列在 payload 裡的 ticket 會被刪除。要做單一 epic 的全量重新同步就用它;只想補幾張卡就別加。
+
+### 從 Jira 匯入
+
+Jira 那一段目前是手動的:我透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 就是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了它的來源與轉換規則。
+
 ## 資料模型
 
 `convex/schema.ts` 三張表:
@@ -81,8 +123,14 @@ Y 軸的週欄位是 48px 寬的窄邊欄,標籤以 `writing-mode: vertical-rl` 
 convex/
   schema.ts          資料表與共用 validator
   board.ts           board:get — 看板的單一 reactive query
-  seed.ts            seed:run — 冪等的範例資料寫入
+  seed.ts            seed:run — 重播原始 PoC 範例資料
+  data.ts            importBoard / removeTickets / summary — 真實資料的維運入口
   convex.config.ts   掛載 static-hosting component
+scripts/
+  import-board.mjs   驗證 payload 並呼叫 data:importBoard
+  jira-status.mjs    Jira 狀態名稱 → 四個燈號
+data/
+  example-epic.json      從 Jira epic ABC-0000 匯出的 27 張工單
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具(以字串比較避開時區偏移)
