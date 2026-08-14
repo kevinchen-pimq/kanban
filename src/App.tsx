@@ -149,18 +149,24 @@ export default function App() {
               </BoardStatus>
             ) : (
               <>
-                {board.hasOlder && (
-                  <div className="flex items-center justify-center gap-2 border-b border-slate-100 py-2 text-xs text-slate-400">
-                    {loadingOlder ? (
-                      <>
-                        <Loader2 className="size-3 animate-spin" aria-hidden />
-                        載入更早的週次...
-                      </>
-                    ) : (
-                      "往上捲動載入更早的週次"
-                    )}
-                  </div>
-                )}
+                {board.hasOlder &&
+                  (loadingOlder ? (
+                    <div className="flex items-center justify-center gap-2 border-b border-slate-100 py-2 text-xs text-slate-400">
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                      載入更早的週次...
+                    </div>
+                  ) : (
+                    // A button, not just a hint: the board opens at scrollTop 0,
+                    // where scrolling up fires no event, so the gesture alone
+                    // would leave the reader unable to reach older weeks at all.
+                    <button
+                      type="button"
+                      onClick={loadOlder}
+                      className="w-full border-b border-slate-100 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                    >
+                      載入更早的週次
+                    </button>
+                  ))}
                 <BoardMatrix
                   epics={board.epics}
                   checkpoints={board.checkpoints}

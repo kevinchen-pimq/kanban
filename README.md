@@ -17,6 +17,7 @@ React + TypeScript + Vite + Tailwind v4 + shadcn/ui,後端與靜態網站託管�
 npm install
 npx convex dev                          # 首次會要求登入,並寫入 .env.local
 npm run import -- data/example-epic.json    # 灌入看板資料
+npm run import -- data/example-epic.json
 npm run dev                             # 同時起 Vite (5173) 與 convex dev
 ```
 
@@ -33,6 +34,7 @@ npm run deploy
 新的 production deployment 資料庫是空的,第一次部署後要灌資料:
 
 ```bash
+node scripts/import-board.mjs data/example-epic.json --prod
 node scripts/import-board.mjs data/example-epic.json --prod
 ```
 
@@ -89,7 +91,9 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
 
 ### 從 Jira 匯入
 
-Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 就是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了來源與每一項轉換規則。
+Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 與 `data/example-epic.json` 都是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了來源與每一項轉換規則。
+
+**Atlassian MCP 的分頁上限**:`searchJiraIssuesUsingJql` 每次最多只回 5 筆,而且超過時 `pageInfo.endCursor` 是 `null` —— 沒有游標可以往下翻。要拿完整清單就看 `remainingCount`(它給的是真正的總數),再用 `AND key NOT IN (已取得的 key…)` 把已知的排掉重跑。另外指定 `fields` 並不會擋掉 `description`,描述很長的 epic 要有心理準備。
 
 **checkpoint 的判定**:目前不使用 Jira 的 sprint 欄位,而是看這張票**是在哪一週被切成 Dev Done**。用 JQL 逐週查:
 
@@ -97,7 +101,9 @@ Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,
 parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下個週二>")
 ```
 
-一張票可能出現在多個週視窗(被打回後再次切 Dev Done),此時取**最後**一次 —— 那是真正生效的那一次。從未進過 Dev Done 的票留在 backlog 列。
+一張票可能出現在多個週視窗(被打回後再次切 Dev Done),此時取**最後**一次 —— 那是真正生效的那一次。
+
+從未進過 Dev Done 的票留在 backlog 列。注意這條規則的後果:spec、設計稿、測試案例、POC 這類**不經過 Dev Done 欄位**的工作,即使在 Jira 已經 Done,也會落在 backlog(ABC-0000 有 13 張是這種)。這是規則本身的性質,不是查詢漏掉了。
 
 **PR 連結的來源**:Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),`gh` CLI 沒安裝,直接打 api.github.com 也被 proxy 擋(403)。可行的是 GitHub MCP 的 PR 搜尋,它可以直接指定 repo,不需要 `add_repo`(後者拒絕跨 owner 掛載):
 
@@ -138,8 +144,9 @@ repo:<owner>/<repo> "ABC-0000"
 
 `board.get` 收一個 `fromDate`(ISO 日期),只回傳**結束日在該日之後**的週次列與這些列的卡片,並附上 `hasOlder` 告訴前端還有沒有更早的資料。卡片是逐 checkpoint 走索引取,不是整張表掃出來再過濾,所以成本跟著視窗大小而不是資料總量。
 
-前端首次只載入近 8 週。捲到接近頂端時再往前拉 8 週,`hasOlder` 變 false 就停止請求。兩個實作細節:
+前端首次只載入近 8 週,每次再往前拉 8 週,`hasOlder` 變 false 就停止請求並收起入口。三個實作細節:
 
+- **入口是按鈕,不只是捲動手勢**:看板初次繪製時 `scrollTop` 已經是 0,此時往上滑不會觸發 `scroll` 事件,單靠捲動偵測會讓讀者完全載不到更早的週次。所以頂端那一列是可點的按鈕,捲動偵測只是額外的便利路徑。
 - **維持捲動位置**:往上補列會讓 `scrollHeight` 變大,若不處理,讀者會被推到頁面下方。所以在請求前記下「距底距離」,DOM 更新後用 `useLayoutEffect` 還原,原本在看的那幾列就留在原處。
 - **不閃白**:Convex 的 `useQuery` 在參數改變時會先回 `undefined`。直接用會讓整個看板在載入更早週次時消失一瞬間,所以保留上一次的結果繼續畫,只在頂端顯示載入中。
 
@@ -166,7 +173,7 @@ scripts/
   jira-status.mjs    Jira 狀態名稱 → 四個燈號
 data/
   example-epic.json      從 Jira epic ABC-0000 匯出的 27 張工單
-  example-epic.WIP.json  ABC-0000 的匯出進度(未完成,勿匯入)
+  example-epic.json      從 Jira epic ABC-0000 匯出的 39 張工單
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具(以字串比較避開時區偏移)
