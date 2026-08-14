@@ -1,0 +1,130 @@
+import { v } from "convex/values";
+import { query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { accentValidator, checkpointKindValidator, statusValidator } from "./schema";
+
+/**
+ * Upper bound on cards fetched for one board render. A matrix that a person
+ * can actually read tops out far below this, so the cap only exists to keep
+ * the query from degrading into a full-table scan as the ticket table grows.
+ * Crossing it is the signal to narrow the window further.
+ */
+const BOARD_TICKET_LIMIT = 2000;
+
+/** Guard on the checkpoint axis; a board with more rows than this is unusable. */
+const CHECKPOINT_LIMIT = 500;
+
+const epicDoc = v.object({
+  _id: v.id("epics"),
+  _creationTime: v.number(),
+  code: v.string(),
+  name: v.string(),
+  accent: accentValidator,
+  order: v.number(),
+});
+
+const checkpointDoc = v.object({
+  _id: v.id("checkpoints"),
+  _creationTime: v.number(),
+  kind: checkpointKindValidator,
+  weekNumber: v.optional(v.number()),
+  startDate: v.optional(v.string()),
+  endDate: v.optional(v.string()),
+  label: v.optional(v.string()),
+  order: v.number(),
+});
+
+const ticketDoc = v.object({
+  _id: v.id("tickets"),
+  _creationTime: v.number(),
+  key: v.string(),
+  title: v.string(),
+  epicId: v.id("epics"),
+  checkpointId: v.id("checkpoints"),
+  status: statusValidator,
+  dueDate: v.optional(v.string()),
+  githubPrs: v.optional(v.array(v.string())),
+  tag: v.optional(v.string()),
+  assignee: v.optional(v.string()),
+});
+
+/**
+ * A week belongs to the window when any part of it falls on or after
+ * `fromDate`. The backlog row has no dates and is always in: it is the
+ * undated pool, not a point in time.
+ */
+function isInWindow(checkpoint: Doc<"checkpoints">, fromDate: string | undefined) {
+  if (checkpoint.kind === "backlog") return true;
+  if (!fromDate || !checkpoint.endDate) return true;
+  return checkpoint.endDate >= fromDate;
+}
+
+/**
+ * The board for one time window, in a single reactive subscription.
+ *
+ * `fromDate` trims the checkpoint axis to weeks ending on or after it, so a
+ * board carrying years of delivery history does not have to ship all of it to
+ * render the recent weeks. The client widens the window as the reader scrolls
+ * up, and `hasOlder` tells it when to stop asking.
+ *
+ * Tickets are fetched per included checkpoint through the index rather than
+ * scanned wholesale, so the cost tracks the window rather than the table.
+ */
+export const get = query({
+  args: {
+    /** ISO date, "YYYY-MM-DD". Omit for the whole history. */
+    fromDate: v.optional(v.string()),
+  },
+  returns: v.object({
+    epics: v.array(epicDoc),
+    checkpoints: v.array(checkpointDoc),
+    tickets: v.array(ticketDoc),
+    /** True when weeks exist before the window, i.e. scrolling up can load more. */
+    hasOlder: v.boolean(),
+    /** True when the ticket cap clipped the result, so the board can say so. */
+    truncated: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const [epics, allCheckpoints] = await Promise.all([
+      ctx.db.query("epics").withIndex("by_order").order("asc").collect(),
+      ctx.db.query("checkpoints").withIndex("by_order").order("asc").take(CHECKPOINT_LIMIT),
+    ]);
+
+    // Row order is derived, not trusted. Weeks carry real dates, so sorting on
+    // them makes a mis-assigned `order` in an import payload unable to scramble
+    // the axis. The undated backlog pool always sits last.
+    const checkpoints = allCheckpoints
+      .filter((c) => isInWindow(c, args.fromDate))
+      .sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === "backlog" ? 1 : -1;
+        if (a.kind === "backlog") return a.order - b.order;
+        return (a.startDate ?? "").localeCompare(b.startDate ?? "");
+      });
+
+    const hasOlder = checkpoints.length < allCheckpoints.length;
+
+    const tickets: Doc<"tickets">[] = [];
+    let truncated = false;
+    for (const checkpoint of checkpoints) {
+      if (tickets.length >= BOARD_TICKET_LIMIT) {
+        truncated = true;
+        break;
+      }
+      const page = await ctx.db
+        .query("tickets")
+        .withIndex("by_checkpoint_and_epic", (q) =>
+          q.eq("checkpointId", checkpoint._id as Id<"checkpoints">),
+        )
+        .take(BOARD_TICKET_LIMIT - tickets.length + 1);
+
+      if (tickets.length + page.length > BOARD_TICKET_LIMIT) {
+        truncated = true;
+        tickets.push(...page.slice(0, BOARD_TICKET_LIMIT - tickets.length));
+      } else {
+        tickets.push(...page);
+      }
+    }
+
+    return { epics, checkpoints, tickets, hasOlder, truncated };
+  },
+});

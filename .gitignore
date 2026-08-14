@@ -1,0 +1,26 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+*.log
+npm-debug.log*
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+*.tsbuildinfo
+
+# Board payloads hold real ticket titles, assignee names and internal repo URLs,
+# so they stay out of version control. Keep yours outside the repo (or in a
+# private one) and point the importer at it:
+#   npm run import -- ../board-data/<epic>.json
+# data/example-epic.json is synthetic and is the format reference.
+data/*.json
+!data/example-epic.json
