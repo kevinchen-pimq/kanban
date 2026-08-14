@@ -2,8 +2,9 @@
 
 Epic × Checkpoint 看板：Epic 為欄、週 checkpoint 為列的矩陣看板。前端 React +
 TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex。
-資料由匯入腳本寫入，不回寫 Jira；看板上唯一能改資料的操作是拖曳卡片換週次
-（`board:moveTicket`，同 Epic 欄位內、無認證），payload 仍是事實來源。
+資料由匯入腳本寫入，不回寫 Jira；看板本身也能編輯（拖曳換週次／排序、新增、
+修改、刪除、點燈號換狀態，都走 `board:*` 公開 mutation、無認證），但 payload
+仍是事實來源——重新匯入會蓋回 payload 的值。
 
 ## 常用指令
 
