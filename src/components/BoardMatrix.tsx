@@ -1,6 +1,8 @@
 import { useDroppable } from "@dnd-kit/core";
-import { LocateFixed } from "lucide-react";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { LocateFixed, Plus } from "lucide-react";
 
+import { useBoardActions } from "@/components/BoardActionsProvider";
 import { DraggableTicket } from "@/components/DraggableTicket";
 import {
   Tooltip,
@@ -9,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   describeCheckpoints,
+  sortCellTickets,
   type Checkpoint,
   type Epic,
   type Ticket,
@@ -155,7 +158,9 @@ export function BoardMatrix({
                   key={epic._id}
                   checkpointId={row.checkpoint._id}
                   epicId={epic._id}
-                  tickets={byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? []}
+                  tickets={sortCellTickets(
+                    byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? [],
+                  )}
                   today={today}
                 />
               ))}
@@ -168,8 +173,9 @@ export function BoardMatrix({
 }
 
 /**
- * One (checkpoint, epic) cell, and the drop target for a card moving between
- * weeks.
+ * One (checkpoint, epic) cell: the drop target for a card moving between weeks,
+ * the sortable list for arranging the cards already in it, and the place a new
+ * card is created.
  *
  * A card may only change rows: a cell belonging to another epic lights up red
  * and rejects the drop, because a move is meant to re-date work, not reassign
@@ -183,14 +189,14 @@ function DropCell({
 }: {
   checkpointId: Id<"checkpoints">;
   epicId: Id<"epics">;
+  /** Already in display order; see `sortCellTickets`. */
   tickets: readonly Ticket[];
   today: string;
 }) {
+  const { openCreate } = useBoardActions();
   const data: CellDropData = { checkpointId, epicId };
-  const { setNodeRef, isOver, active } = useDroppable({
-    id: `cell:${checkpointId}:${epicId}`,
-    data,
-  });
+  const cellId = `cell:${checkpointId}:${epicId}`;
+  const { setNodeRef, isOver, active } = useDroppable({ id: cellId, data });
 
   const drag = ticketDragData(active);
   const wrongEpic = drag !== null && drag.epicId !== epicId;
@@ -202,11 +208,23 @@ function DropCell({
       ref={setNodeRef}
       title={rejecting ? "只能在同一個 Epic 的欄位內移動" : undefined}
       className={cn(
-        "border-r border-b border-slate-200 p-3 align-top transition-colors",
+        "group relative border-r border-b border-slate-200 p-3 align-top transition-colors",
         accepting && "bg-indigo-50 ring-2 ring-indigo-400 ring-inset",
         rejecting && "cursor-not-allowed bg-rose-50 ring-2 ring-rose-400 ring-inset",
       )}
     >
+      {/* Unobtrusive on purpose: one per cell, only on hover, so the board still
+          reads as a board rather than a form. */}
+      <button
+        type="button"
+        onClick={() => openCreate(epicId, checkpointId)}
+        aria-label="在這一格新增卡片"
+        title="在這一格新增卡片"
+        className="absolute top-1 right-1 rounded-md p-1 text-slate-300 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-indigo-600 focus-visible:opacity-100"
+      >
+        <Plus className="size-3.5" aria-hidden />
+      </button>
+
       <div className="min-h-20 space-y-2.5">
         {tickets.length === 0 ? (
           <div
@@ -219,9 +237,19 @@ function DropCell({
             {rejecting ? "不能跨 Epic" : accepting ? "放這裡" : "無對應項目"}
           </div>
         ) : (
-          tickets.map((ticket) => (
-            <DraggableTicket key={ticket._id} ticket={ticket} today={today} />
-          ))
+          // One SortableContext per cell, identified by the cell id: that is what
+          // tells dnd-kit which list a card is being sorted within, and what
+          // makes a drag into a different cell read as a move rather than a
+          // reorder.
+          <SortableContext
+            id={cellId}
+            items={tickets.map((ticket) => ticket._id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {tickets.map((ticket) => (
+              <DraggableTicket key={ticket._id} ticket={ticket} today={today} />
+            ))}
+          </SortableContext>
         )}
       </div>
     </td>

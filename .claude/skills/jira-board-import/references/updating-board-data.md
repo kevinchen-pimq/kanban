@@ -18,7 +18,11 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
 
 匯入是**冪等**的——以自然鍵比對後 upsert（epic 用 `code`、週用 `weekNumber`、backlog 用 kind、ticket 用 `key`），同一份檔案重跑幾次結果都一樣。認證走 Convex CLI，不需要 deploy key，匯入相關的函式全部是 internal（`convex/data.ts`），瀏覽器叫不動。
 
-看板上另外有一個公開、無認證的寫入端點：`board:moveTicket`，讓使用者拖曳卡片換 checkpoint 列（限同一個 epic 欄位）。它不影響匯入的正確性，但要記得**payload 才是事實來源**：對某個 epic 做一次完整重新匯入（尤其帶 `pruneEpics`）會把手動拖過的卡片放回 payload 指定的那一週。要保留某次手動調整，就把它寫回 payload 的 `checkpoint` 欄位。
+看板本身也可以編輯：`convex/board.ts` 的 `board:*` mutation（換週次、同格排序、新增、修改、刪除）是公開且無認證的。這不影響匯入的正確性，但**匯入前後要記得 payload 才是事實來源**：
+
+- 對某個 epic 重新匯入會把 `title` / `status` / `assignee` / `dueDate` / `tag` / `githubPrs` 與所在週次**蓋回 payload 的值**，手動改過的內容就沒了。要保留就寫回 payload。
+- 帶 `pruneEpics` 的匯入會**刪掉 payload 沒有提到的卡片**，包含在看板上手動建立的（key 長得像 `LOCAL-3`）。真的要留下來，就在 payload 補上同 key 的 ticket。
+- **格子內的排序（`order`）不會被匯入動到**，手動排過的順序在補充匯入之後還在；新匯入的卡片沒有 `order`，會排在該格已排序卡片的後面。
 
 ## 看板設定（不在 payload 裡）
 

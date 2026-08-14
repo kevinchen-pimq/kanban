@@ -36,6 +36,11 @@ export function StagingTray({
       ref={setNodeRef}
       className={cn(
         "fixed bottom-5 left-1/2 z-50 flex max-w-[min(90vw,44rem)] -translate-x-1/2 flex-col gap-2 rounded-2xl border-2 bg-white/95 px-4 py-3 shadow-xl backdrop-blur transition",
+        // Empty, the tray is nothing but a hint line, and a hint line is a mean
+        // target to hit while holding a card. Sized to twice what the text needs
+        // (289×45 measured) so there is somewhere to aim; with cards in it, the
+        // content takes over and it grows as before.
+        parked.length === 0 && "min-h-[90px] min-w-[578px] justify-center",
         isOver
           ? "border-indigo-500 bg-indigo-50/95"
           : "border-dashed border-slate-300",

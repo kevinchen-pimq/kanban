@@ -156,6 +156,23 @@ export function isOverdue(ticket: Ticket, today: string): boolean {
   return isBefore(ticket.dueDate, today);
 }
 
+/**
+ * Order the cards of one cell top to bottom.
+ *
+ * `order` is what dragging cards around within a cell writes, so it wins when it
+ * is there. Cards that have never been arranged by hand — everything an import
+ * created — have no `order` and keep the order they were created in, which is
+ * how the board looked before ordering existed.
+ */
+export function sortCellTickets(tickets: readonly Ticket[]): Ticket[] {
+  return [...tickets].sort((a, b) => {
+    if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
+    if (a.order !== undefined) return -1;
+    if (b.order !== undefined) return 1;
+    return a._creationTime - b._creationTime;
+  });
+}
+
 /** Case-insensitive match against the ticket key and title, as in the PoC. */
 export function matchesSearch(ticket: Ticket, search: string): boolean {
   if (!search) return true;

@@ -83,9 +83,15 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   不要在 payload 裡硬塞 `status` 繞過去；匯入失敗是刻意設計。
 - **checkpoint 列順序由日期推導**，`convex/board.ts` 會忽略 payload 的
   `order`——看到「列排錯」先想到這裡，不是 bug。
-- **公開寫入只有 `board:moveTicket` 一個，而且沒有認證。** 匯入與設定相關函式一律
-  留在 internal（`convex/data.ts`，含 `setConfig`）。要再加公開 mutation 前先想
-  清楚：任何人打開網站就能呼叫它。
+- **看板的公開寫入面是 `convex/board.ts` 裡的 `board:*` mutation，全部沒有認證。**
+  目前是 `moveTicket`（換週次）、`reorderCell`（同格內排序）、`createTicket`、
+  `updateTicket`、`deleteTicket`。使用者要求直接在看板上編輯，這是刻意接受的取捨
+  ——也因此每個 handler 都要跟匯入一樣嚴格驗證（標題非空、ISO 日期、PR 網址、key
+  唯一、epic 護欄），共用的檢查住在 `convex/validation.ts`。**匯入與設定函式一律
+  留在 internal**（`convex/data.ts`，含 `importBoard` / `setConfig`）。要再加公開
+  mutation 前先想清楚：任何人打開網站就能呼叫它。
+- **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
+  要換欄位或改 key 就改 payload 重新匯入。
 - **Jira 站台網址與負責人顏色住在 Convex 的 `config` 表**，不寫在程式裡；用
   `npx convex run data:setConfig` 設定（見 `docs/data-model.md`）。
 - `convex/_generated/` 有進版控；改了 `convex/` 之後要讓 `convex dev`

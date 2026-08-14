@@ -12,6 +12,10 @@ import { Loader2 } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { AssigneeAvatar } from "@/components/AssigneeAvatar";
+import {
+  BoardActionsProvider,
+  type BoardActions,
+} from "@/components/BoardActionsProvider";
 import { BoardConfigProvider } from "@/components/BoardConfigProvider";
 import {
   BoardHeader,
@@ -22,17 +26,23 @@ import { BoardMatrix } from "@/components/BoardMatrix";
 import type { FilterOption } from "@/components/MultiSelectFilter";
 import { StagingTray } from "@/components/StagingTray";
 import { TicketCard } from "@/components/TicketCard";
+import {
+  TicketDialog,
+  type TicketFormValues,
+  type TicketTarget,
+} from "@/components/TicketDialog";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { matchesSearch, type Ticket, type TicketStatus } from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
 import {
-  cellDropData,
+  reorderedCell,
+  resolveDropTarget,
   ticketDragData,
   trayFirstCollision,
-  TRAY_DROP_ID,
 } from "@/lib/dnd";
 import { scrollToCurrentWeek } from "@/lib/scroll";
+import { useStatusCycle } from "@/hooks/useStatusCycle";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 
@@ -48,6 +58,9 @@ const LOAD_TRIGGER_PX = 240;
 
 /** Pointer travel before a press turns into a drag, so a click stays a click. */
 const DRAG_START_PX = 6;
+
+/** A click this soon after a drop is the drop's own click, not a request. */
+const CLICK_AFTER_DRAG_MS = 250;
 
 export default function App() {
   const today = useMemo(() => todayIso(), []);
@@ -81,6 +94,11 @@ export default function App() {
       }
     },
   );
+
+  const reorderCell = useMutation(api.board.reorderCell);
+  const createTicket = useMutation(api.board.createTicket);
+  const updateTicket = useMutation(api.board.updateTicket);
+  const deleteTicket = useMutation(api.board.deleteTicket);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Distance from the bottom, captured before older rows are prepended.
@@ -167,18 +185,36 @@ export default function App() {
     );
   }, [board, search, statusFilter, assigneeFilter]);
 
+  // Clicking a status dot shows the new colour at once and writes once the
+  // clicking stops; the override is applied here so the card, the tray chip and
+  // the drag overlay all agree on what the dot says.
+  const { cycleStatus, withPendingStatus } = useStatusCycle(
+    useCallback(
+      (ticketId, status) => updateTicket({ ticketId, status }),
+      [updateTicket],
+    ),
+  );
+
   // Cards lifted into the staging tray, oldest first. Client-side only: parking
   // a card writes nothing, it just takes the card out of the matrix until it is
   // dropped somewhere. Ids rather than documents, so the cards stay reactive.
   const [parkedIds, setParkedIds] = useState<readonly Id<"tickets">[]>([]);
   const [dragged, setDragged] = useState<Ticket | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<TicketTarget | null>(null);
+
+  // A drag ends with a pointerup on the card, which the browser also reports as
+  // a click. Without this the card would open its editor every time it is
+  // dropped, so a click landing right after a drag is ignored.
+  const lastDragEnd = useRef(0);
 
   const ticketsById = useMemo(() => {
     const map = new Map<Id<"tickets">, Ticket>();
-    for (const ticket of board?.tickets ?? []) map.set(ticket._id, ticket);
+    for (const ticket of withPendingStatus(board?.tickets ?? [])) {
+      map.set(ticket._id, ticket);
+    }
     return map;
-  }, [board]);
+  }, [board, withPendingStatus]);
 
   // Read from the whole window rather than the filtered set: a filter change
   // must not make a parked card vanish with no way to put it back.
@@ -192,8 +228,11 @@ export default function App() {
 
   const parked = useMemo(() => new Set(parkedIds), [parkedIds]);
   const gridTickets = useMemo(
-    () => visibleTickets.filter((ticket) => !parked.has(ticket._id)),
-    [visibleTickets, parked],
+    () =>
+      withPendingStatus(visibleTickets).filter(
+        (ticket) => !parked.has(ticket._id),
+      ),
+    [visibleTickets, parked, withPendingStatus],
   );
 
   const sensors = useSensors(
@@ -213,23 +252,31 @@ export default function App() {
     [ticketsById],
   );
 
+  const failed = useCallback((what: string, error: unknown) => {
+    setMoveError(
+      `${what}:${error instanceof Error ? error.message : String(error)}`,
+    );
+  }, []);
+
   const handleDragEnd = useCallback(
     ({ active, over }: DragEndEvent) => {
       setDragged(null);
-      const drag = ticketDragData(active);
-      if (!drag || !over) return; // dropped on empty space: nothing changes
+      lastDragEnd.current = Date.now();
 
-      if (over.id === TRAY_DROP_ID) {
+      const drag = ticketDragData(active);
+      if (!drag) return;
+
+      const target = resolveDropTarget(over);
+      if (!target) return; // dropped on empty space: nothing changes
+
+      if (target.kind === "tray") {
         setParkedIds((current) =>
           current.includes(drag.ticketId) ? current : [...current, drag.ticketId],
         );
         return;
       }
 
-      const cell = cellDropData(over);
-      if (!cell) return;
-
-      if (cell.epicId !== drag.epicId) {
+      if (target.epicId !== drag.epicId) {
         // Rejected, so a card dragged from the tray stays parked.
         setMoveError("只能在同一個 Epic 的欄位內移動卡片,卡片沒有被移動。");
         return;
@@ -238,32 +285,106 @@ export default function App() {
       setMoveError(null);
       setParkedIds((current) => current.filter((id) => id !== drag.ticketId));
 
-      if (ticketsById.get(drag.ticketId)?.checkpointId === cell.checkpointId) {
-        return; // dropped back where it came from
+      const from = ticketsById.get(drag.ticketId)?.checkpointId;
+      if (from === target.checkpointId) {
+        // Same cell: this was a reorder. `over` is the card the pointer was on
+        // when the drag ended, and dnd-kit's own indices say where that puts it.
+        const ticketIds = over ? reorderedCell(active, over) : null;
+        if (!ticketIds) return; // dropped on the cell itself, not on a card
+        void reorderCell({
+          epicId: drag.epicId,
+          checkpointId: target.checkpointId,
+          ticketIds,
+        }).catch((error: unknown) => failed("排序失敗", error));
+        return;
       }
 
       void moveTicket({
         ticketId: drag.ticketId,
         epicId: drag.epicId,
-        checkpointId: cell.checkpointId,
-      }).catch((error: unknown) => {
-        setMoveError(
-          `移動失敗:${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+        checkpointId: target.checkpointId,
+      }).catch((error: unknown) => failed("移動失敗", error));
     },
-    [moveTicket, ticketsById],
+    [failed, moveTicket, reorderCell, ticketsById],
   );
 
   const unpark = useCallback((ticket: Ticket) => {
     setParkedIds((current) => current.filter((id) => id !== ticket._id));
   }, []);
 
+  const epicsById = useMemo(() => {
+    const map = new Map<Id<"epics">, string>();
+    for (const epic of board?.epics ?? []) map.set(epic._id, epic.name);
+    return map;
+  }, [board]);
+
+  const actions = useMemo<BoardActions>(
+    () => ({
+      openCreate: (epicId, checkpointId) =>
+        setEditing({
+          mode: "create",
+          epicId,
+          checkpointId,
+          epicName: epicsById.get(epicId) ?? "",
+        }),
+      openEdit: (ticket) => {
+        // Ignore the click that ends a drag; see `lastDragEnd`.
+        if (Date.now() - lastDragEnd.current < CLICK_AFTER_DRAG_MS) return;
+        setEditing({
+          mode: "edit",
+          ticket,
+          epicName: epicsById.get(ticket.epicId) ?? "",
+        });
+      },
+      cycleStatus,
+      checkpoints: board?.checkpoints ?? [],
+    }),
+    [board?.checkpoints, cycleStatus, epicsById],
+  );
+
+  // The form hands back strings; the mutations take the typed shape, with null
+  // meaning "clear this field" so an emptied box actually empties the value.
+  const submitTicket = useCallback(
+    async (target: TicketTarget, values: TicketFormValues) => {
+      const prs = values.githubPrs
+        .map((url) => url.trim())
+        .filter((url) => url !== "");
+
+      if (target.mode === "create") {
+        await createTicket({
+          title: values.title,
+          epicId: target.epicId,
+          checkpointId: values.checkpointId,
+          key: values.key.trim() || undefined,
+          status: values.status,
+          assignee: values.assignee.trim() || undefined,
+          dueDate: values.dueDate || undefined,
+          tag: values.tag.trim() || undefined,
+          githubPrs: prs.length > 0 ? prs : undefined,
+        });
+        return;
+      }
+
+      await updateTicket({
+        ticketId: target.ticket._id,
+        title: values.title,
+        checkpointId: values.checkpointId,
+        status: values.status,
+        assignee: values.assignee.trim() || null,
+        dueDate: values.dueDate || null,
+        tag: values.tag.trim() || null,
+        githubPrs: prs.length > 0 ? prs : null,
+      });
+    },
+    [createTicket, updateTicket],
+  );
+
   return (
     <TooltipProvider>
       {/* The config travels with the board query, so cards read it from context
           rather than through every component between here and the card. */}
       <BoardConfigProvider config={board?.config ?? null}>
+       <BoardActionsProvider actions={actions}>
         <DndContext
           sensors={sensors}
           collisionDetection={trayFirstCollision}
@@ -367,6 +488,27 @@ export default function App() {
             )}
           </DragOverlay>
         </DndContext>
+
+        {editing && (
+          <TicketDialog
+            // Remount per card, so the fields start from the card being opened.
+            key={editing.mode === "edit" ? editing.ticket._id : "create"}
+            target={editing}
+            checkpoints={board?.checkpoints ?? []}
+            assigneeSuggestions={assigneeOptions
+              .map((option) => option.value)
+              .filter((name): name is string => name !== null)}
+            today={today}
+            onClose={() => setEditing(null)}
+            onSubmit={(values) => submitTicket(editing, values)}
+            onDelete={async () => {
+              if (editing.mode === "edit") {
+                await deleteTicket({ ticketId: editing.ticket._id });
+              }
+            }}
+          />
+        )}
+       </BoardActionsProvider>
       </BoardConfigProvider>
     </TooltipProvider>
   );

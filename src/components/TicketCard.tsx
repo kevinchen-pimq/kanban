@@ -2,6 +2,7 @@ import { Clock, GitPullRequest, SquareCheckBig } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { AssigneeAvatar } from "@/components/AssigneeAvatar";
+import { useBoardActions } from "@/components/BoardActionsProvider";
 import { useBoardConfig } from "@/components/BoardConfigProvider";
 import { StatusDot } from "@/components/StatusDot";
 import {
@@ -30,11 +31,16 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
   const prs = ticket.githubPrs ?? [];
   const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0);
   const jiraUrl = jiraIssueUrl(useBoardConfig()?.jiraBaseUrl, ticket.key);
+  const { openEdit, cycleStatus } = useBoardActions();
 
   return (
+    // Clicking anywhere that is not a control opens the card for editing. The
+    // drag sensor needs 6px of travel before it takes over, so a click stays a
+    // click; `openEdit` also ignores the click that ends a drag.
     <article
+      onClick={() => openEdit(ticket)}
       className={cn(
-        "flex flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md",
+        "flex cursor-pointer flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md",
         status.cardHover,
       )}
     >
@@ -44,11 +50,23 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
         </h4>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="shrink-0 pt-0.5">
+            {/* The dot is the fastest way to move a card along, so it is a
+                button: each click advances one status. The write is debounced
+                in `App`, so several clicks in a row cost one write. */}
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation(); // not a request to open the card
+                cycleStatus(ticket);
+              }}
+              onPointerDown={keepPointerFromDrag}
+              aria-label={`狀態: ${status.label}，點一下切換到下一個狀態`}
+              className="shrink-0 rounded-full pt-0.5 transition hover:scale-125"
+            >
               <StatusDot status={ticket.status} className="block" />
-            </span>
+            </button>
           </TooltipTrigger>
-          <TooltipContent>狀態: {status.label}</TooltipContent>
+          <TooltipContent>狀態: {status.label}（點一下切換）</TooltipContent>
         </Tooltip>
       </div>
 
@@ -79,6 +97,7 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
               target="_blank"
               rel="noreferrer"
               onPointerDown={keepPointerFromDrag}
+              onClick={(event) => event.stopPropagation()}
               className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
             >
               <GitPullRequest className="size-2.5" aria-hidden />
@@ -101,6 +120,7 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
             target="_blank"
             rel="noreferrer"
             onPointerDown={keepPointerFromDrag}
+            onClick={(event) => event.stopPropagation()}
             title={`在 Jira 開啟 ${ticket.key}`}
             className="inline-flex items-center gap-1 rounded font-mono font-medium text-slate-500 transition hover:text-indigo-700 hover:underline"
           >

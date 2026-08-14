@@ -3,6 +3,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { accentValidator, checkpointKindValidator, statusValidator } from "./schema";
+import { assertIsoDate, checkpointRefValidator } from "./validation";
 
 /**
  * Import and maintenance entry points for the board.
@@ -16,9 +17,6 @@ import { accentValidator, checkpointKindValidator, statusValidator } from "./sch
  * can be replayed as often as you like: epics by `code`, weeks by
  * `weekNumber`, the backlog row by its kind, and tickets by `key`.
  */
-
-/** Which row a ticket belongs to: a week number, or the backlog pool. */
-const checkpointRefValidator = v.union(v.number(), v.literal("backlog"));
 
 const epicInput = v.object({
   code: v.string(),
@@ -48,14 +46,6 @@ const ticketInput = v.object({
   assignee: v.optional(v.string()),
 });
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-function assertIsoDate(value: string | undefined, field: string) {
-  if (value !== undefined && !ISO_DATE.test(value)) {
-    throw new Error(`${field} must be an ISO date like 2026-08-11, got "${value}"`);
-  }
-}
-
 /** Append-at-the-end ordering for rows the payload did not place explicitly. */
 async function nextOrder(
   ctx: MutationCtx,
@@ -73,6 +63,12 @@ async function nextOrder(
  * Omitted optional fields on an existing row keep their current value, except
  * `dueDate`, which is cleared when absent so a date removed upstream also
  * disappears here.
+ *
+ * `order` — the position of a card within its cell, set by dragging cards around
+ * on the board — is deliberately absent from the fields written below, so an
+ * import never disturbs an arrangement someone made by hand. Newly created
+ * tickets have no `order` at all and fall to the end of their cell in creation
+ * order until somebody drags them.
  */
 export const importBoard = internalMutation({
   args: {

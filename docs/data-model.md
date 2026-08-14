@@ -48,12 +48,35 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 
 設定隨 `board:get` 一起回傳，不另開一個 query：它是一份每張卡片都要用的小文件，看板本來就只維持一個 subscription；分成兩個 query 會多一個載入狀態，卡片也會先畫成沒有連結、再重畫一次。前端把它放進 context（`BoardConfigProvider`），卡片直接讀，不用一路傳 props。
 
-## 唯一的公開寫入：`board:moveTicket`
+## 公開的寫入面：`convex/board.ts` 的 `board:*`
 
-除了匯入（`convex/data.ts` 全是 internal function）之外，資料只有一條對外開放的寫入路徑：`convex/board.ts` 的 `moveTicket({ ticketId, epicId, checkpointId })`，看板的拖曳功能用它把卡片換到另一個 checkpoint 列。它只改 `checkpointId`；`epicId` 是「這張卡必須留在哪一欄」的護欄，和卡片現在的 epic 不符就整個拒絕，所以任何呼叫者都不可能靠它換欄位。
+看板現在可以直接編輯，所以對外開放的 mutation 不只一個了。全部住在 `convex/board.ts`：
 
-除此之外對外只開放唯讀的 query：`board:get`，以及 `staticHosting:getCurrentDeployment`（前端用它判斷有沒有新版本部署，見 architecture.md）。
+| Mutation | 做什麼 | 護欄 |
+| --- | --- | --- |
+| `moveTicket` | 把卡片換到另一個 checkpoint 列 | `epicId` 是「必須留在這一欄」的護欄，和卡片現在的 epic 不符就整個拒絕；目標列必須存在；卡片落在該格最後 |
+| `reorderCell` | 寫入一整格的卡片順序 | 每張卡都要屬於這個 epic 與這一格；同一張卡重複列出會拒絕 |
+| `createTicket` | 直接在看板上開卡 | 標題非空、ISO 日期、PR 必須是 http(s) 網址、key 唯一且不含空白；epic 與 checkpoint 必須存在 |
+| `updateTicket` | 改標題／狀態／週次／負責人／日期／標籤／PR | 同上的欄位檢查；**不收 `epicId` 與 `key`**，所以改不動 |
+| `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 
-這個 mutation **沒有認證**——看板前面沒有登入機制，任何打得開網站的人都能移動卡片。這是為了內部小團隊的拖曳體驗刻意接受的取捨，要對外開放就得先在這個 handler 加檢查。
+唯讀的 query 有 `board:get` 與 `staticHosting:getCurrentDeployment`（前端用它判斷有沒有新版本部署，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）**維持 internal**，瀏覽器叫不動。
 
-移動不會變成新的事實來源：payload 仍然決定卡片屬於哪一週，所以之後對這個 epic 做一次完整重新匯入，手動拖過的位置會被 payload 蓋回去。
+這些 mutation **全部沒有認證**——看板前面沒有登入機制，任何打得開網站的人都能新增、修改、刪除卡片。這是為了「直接在看板上編輯」刻意接受的取捨；正因為如此，每個 handler 的驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。真要收斂權限，就從這幾個 handler 開始加檢查。
+
+**payload 仍然是事實來源。** 在看板上做的修改不會回寫 Jira，也不比 payload 權威：對某個 epic 做一次完整重新匯入時，`title` / `status` / `assignee` / `dueDate` / `tag` / `githubPrs` 與所在週次都會被 payload 蓋回去；帶 `pruneEpics` 的匯入還會**刪掉** payload 沒有提到的卡片——包含在看板上手動建立的那些（`LOCAL-*`）。要保留手動的調整，就把它寫進 payload。
+
+### 卡片不能換 Epic，也不能改 key
+
+`updateTicket` 根本不收 `epicId`：一張卡屬於哪個專案來自 Jira，看板讓它悄悄換欄位會讓矩陣說謊（拖曳跨欄同樣被拒絕）。`key` 也不收，因為匯入是拿 key 比對的，改掉會讓這張卡在下次匯入時被當成新卡再建一次。
+
+手動建立的卡片沒有對應的 Jira issue，key 留空就會拿到 `LOCAL-<n>`（`n` 是現有 `LOCAL-` 編號的最大值 +1，刪掉不會回收），一眼就看得出它不是 Jira 來的。要對上真實的 issue 就自己填 key，重複會被拒絕。
+
+### 格子內的排序
+
+`tickets.order` 是卡片在自己那一格裡的位置（0 起算）。它是選填的，因為沒有任何匯入會設定它：
+
+- 顯示規則是「**有 `order` 的照 `order` 排，沒有的照建立時間排在後面**」（`src/lib/board.ts` 的 `sortCellTickets`），所以從來沒被拖過的格子跟以前長得一樣。
+- 只要有卡片被放進某一格（`moveTicket` / `createTicket` / `updateTicket` 換週次），那一格會順手被編號 0..n-1，**而且維持當下看到的順序**——不編號的話，新卡片拿到 `max(order)+1` 反而會排在那些「沒有 order」的卡片前面，看起來就不是落在最後。沒人動過的格子不會被編號。
+- `reorderCell` 一次寫入整格的順序（前端送完整的 id 陣列），所以重放同一個請求結果一樣。拖曳過程中卡片的位移是 dnd-kit 的 transform，放手才寫一次。
+- **匯入不動 `order`**：`importBoard` 寫入的欄位裡沒有它，所以手動排過的順序在之後的補充匯入後還在。新匯入的卡片沒有 `order`，排在該格已排序卡片的後面。

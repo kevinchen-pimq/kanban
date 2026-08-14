@@ -78,6 +78,10 @@ export default defineSchema({
     // omits whichever is missing.
     tag: v.optional(v.string()),
     assignee: v.optional(v.string()),
+    // Position within its (epic, checkpoint) cell, ascending. Optional because
+    // no import sets it: cards that have never been dragged into an order have
+    // none, and the board falls back to creation order for them.
+    order: v.optional(v.number()),
   })
     .index("by_key", ["key"])
     .index("by_checkpoint_and_epic", ["checkpointId", "epicId"]),
