@@ -1,6 +1,6 @@
 # 資料模型
 
-`convex/schema.ts` 三張表：
+`convex/schema.ts` 四張表——三張是看板資料，一張是設定：
 
 - **`epics`** — X 軸的欄。`code`（如 `DEMO-BOARD`）、`name`、`accent` 顏色鍵、`order` 決定左右順序。
 - **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`；週別存 `weekNumber` 與 `startDate`/`endDate`（ISO 日期字串）。**列的順序由日期推導**，不看 payload 給的 `order`——週次有真實日期，從日期排就不可能因為匯入時 `order` 給錯而排亂（這個錯踩過一次）。backlog 永遠在最後。
@@ -51,6 +51,8 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 ## 唯一的公開寫入：`board:moveTicket`
 
 除了匯入（`convex/data.ts` 全是 internal function）之外，資料只有一條對外開放的寫入路徑：`convex/board.ts` 的 `moveTicket({ ticketId, epicId, checkpointId })`，看板的拖曳功能用它把卡片換到另一個 checkpoint 列。它只改 `checkpointId`；`epicId` 是「這張卡必須留在哪一欄」的護欄，和卡片現在的 epic 不符就整個拒絕，所以任何呼叫者都不可能靠它換欄位。
+
+除此之外對外只開放唯讀的 query：`board:get`，以及 `staticHosting:getCurrentDeployment`（前端用它判斷有沒有新版本部署，見 architecture.md）。
 
 這個 mutation **沒有認證**——看板前面沒有登入機制，任何打得開網站的人都能移動卡片。這是為了內部小團隊的拖曳體驗刻意接受的取捨，要對外開放就得先在這個 handler 加檢查。
 

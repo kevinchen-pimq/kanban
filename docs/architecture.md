@@ -7,6 +7,7 @@ convex/
   schema.ts          資料表與共用 validator
   board.ts           board:get — 依時間區間回傳看板（含 config）的單一 reactive query
                      board:moveTicket — 唯一的公開寫入（拖曳改週次，無認證）
+  staticHosting.ts   re-export static-hosting component 的 deployment query
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
                      setConfig / getConfig — 看板設定（internal）
   convex.config.ts   掛載 static-hosting component
@@ -23,6 +24,7 @@ src/
                      AssigneeAvatar — 卡片與篩選選單共用的負責人頭像
                      BoardConfigProvider — 看板設定的 context（來自 board:get）
                      DraggableTicket / StagingTray — 拖曳與暫存區
+                     UpdateNotice — 有新版本時的重新載入提示
   components/ui/     shadcn/ui 元件
 data/
   example-epic.json  合成的範例 payload（格式參考；真實 payload 不進版控）
@@ -78,3 +80,11 @@ Y 軸的週欄位是 48px 寬的窄邊欄，標籤以 `writing-mode: vertical-rl
 - **樂觀更新。** 放下的瞬間先用 `withOptimisticUpdate` 就地把 `checkpointId` 改掉，卡片同一個 frame 就出現在新的列，不用等 round trip；失敗時 Convex 會自己回滾，前端在底部顯示紅色訊息。暫存卡片是從整個時間窗（不是篩選後的清單）推導出來的，所以改篩選不會讓暫存的卡片憑空消失。
 
 篩選開著時拖曳操作的是「看得到的卡片」——被篩掉的卡片不在畫面上，也就不會被拖到。
+
+## 有新版本時的提示
+
+看板是那種「開著一整週不關」的頁面，所以部署了新版本要講出來，否則使用者會一直看著週一載入的那份 bundle。
+
+static-hosting component 自己記著「現在服務的是哪一次部署」，`convex/staticHosting.ts` 把它的 query re-export 成 `staticHosting:getCurrentDeployment`（**公開唯讀**，不是寫入端點）。前端的 `UpdateNotice` 用 component 提供的 `useDeploymentUpdates()` 訂閱它：hook 記住首次繪製時看到的 deployment id，只有在 id 改變時才回報有更新——所以正常開頁面不會跳提示，只有在你開著頁面時有人部署才會。提示可以按「重新載入」或關掉（關掉只針對這一次部署）。
+
+提示條是自己做的，不是 component 內建的 `UpdateBanner`：內建那個帶自己的 inline style 與英文文案。自製的版本長得像看板的其他元件，而且定位在 `<main>` 上（`absolute`），所以不需要知道 header 有多高，也不會和底部的拖曳暫存區疊在一起。

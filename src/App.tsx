@@ -22,6 +22,7 @@ import { BoardMatrix } from "@/components/BoardMatrix";
 import type { FilterOption } from "@/components/MultiSelectFilter";
 import { StagingTray } from "@/components/StagingTray";
 import { TicketCard } from "@/components/TicketCard";
+import { UpdateNotice } from "@/components/UpdateNotice";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { matchesSearch, type Ticket, type TicketStatus } from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
@@ -288,7 +289,10 @@ export default function App() {
               totalCount={board?.tickets.length ?? 0}
             />
 
-            <main className="min-h-0 flex-1 p-4 md:p-6">
+            {/* relative: the update notice floats against this box, which starts
+              right below the header, so it needs no header-height constant. */}
+          <main className="relative min-h-0 flex-1 p-4 md:p-6">
+            <UpdateNotice />
               <div
                 ref={scrollerRef}
                 onScroll={handleScroll}

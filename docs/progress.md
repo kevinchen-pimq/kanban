@@ -18,6 +18,8 @@ _更新於 2026-08-14。_
   backlog）；拖到別的 Epic 欄位會標紅並拒絕，因為移動只改交付週次、不換專案。
   拖曳過程中畫面底部會出現**暫存區**，可以先把卡片停在那裡、捲到目標週次再拖
   出去放；停在暫存區的卡片還沒有被移動，只有放進格子時才會寫入。
+- 部署新版本時，開著看板的頁面會跳出「看板有新版本」提示，可以直接重新載入
+  （靠 static-hosting component 的 deployment query，不會在初次載入時誤跳）
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`）
 - Convex 靜態託管部署（production / dev 兩個 deployment）
