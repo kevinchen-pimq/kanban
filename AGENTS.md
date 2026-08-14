@@ -38,6 +38,9 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 - 登入後若被問「要不要 link 既有的 anonymous deployment」，忽略它——那是本地
   測試用的拋棄式 deployment。
 - 憑證跟著容器走，session 結束就消失，下個 session 重來一次。
+- 每次登入都會在 Convex 帳號上留下一個 access token（以 `--device-name` 命名）。
+  發出的憑證可以在 https://dashboard.convex.dev/profile#personal-access-tokens
+  管理，**session 結束後記得去清理**，並提醒使用者這件事。
 - 只想在本地驗證、不碰團隊資料時，用 `CONVEX_AGENT_MODE=anonymous npx convex dev`
   起匿名本地 deployment 即可，不需要登入。
 
