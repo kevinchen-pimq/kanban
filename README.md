@@ -6,18 +6,19 @@ React + TypeScript + Vite + Tailwind v4 + shadcn/ui,後端與靜態網站託管�
 
 ## 線上位置
 
-| 環境 | 網站 | Convex Dashboard |
-| --- | --- | --- |
-| Production | https://lovely-jackal-885.convex.site | [kanban / production](https://dashboard.convex.dev/t/example-team/kanban/lovely-jackal-885) |
-| Development | https://laudable-buffalo-595.convex.site | [kanban / dev](https://dashboard.convex.dev/t/example-team/kanban/laudable-buffalo-595) |
+| 環境 | 網站 |
+| --- | --- |
+| Production | https://lovely-jackal-885.convex.site |
+| Development | https://laudable-buffalo-595.convex.site |
+
+各 deployment 的 dashboard 從 `npx convex dashboard` 開,不寫在這裡。
 
 ## 開始開發
 
 ```bash
 npm install
 npx convex dev                          # 首次會要求登入,並寫入 .env.local
-npm run import -- data/example-epic.json    # 灌入看板資料
-npm run import -- data/example-epic.json
+npm run import -- data/example-epic.json   # 灌入範例資料
 npm run dev                             # 同時起 Vite (5173) 與 convex dev
 ```
 
@@ -35,7 +36,6 @@ npm run deploy
 
 ```bash
 node scripts/import-board.mjs data/example-epic.json --prod
-node scripts/import-board.mjs data/example-epic.json --prod
 ```
 
 想先在 dev deployment 上做煙霧測試(驗證 HTTP 路由、快取標頭、SPA fallback):
@@ -47,10 +47,10 @@ npm run deploy:dev
 ## 更新看板資料
 
 ```bash
-node scripts/import-board.mjs data/example-epic.json --dry-run   # 只驗證,不寫入
-npm run import -- data/example-epic.json                          # 寫入 dev
-node scripts/import-board.mjs data/example-epic.json --prod       # 寫入 production
-npm run board                                                 # 看目前看板有什麼
+node scripts/import-board.mjs <payload>.json --dry-run   # 只驗證,不寫入
+npm run import -- <payload>.json                         # 寫入 dev
+node scripts/import-board.mjs <payload>.json --prod      # 寫入 production
+npm run board                                            # 看目前看板有什麼
 ```
 
 拿掉整個 epic(連同它底下所有 ticket,checkpoint 列不動):
@@ -69,17 +69,17 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
   "checkpoints": [{ "kind": "week", "weekNumber": 34,
                     "startDate": "2026-08-25", "endDate": "2026-08-31" }],
   "tickets": [{
-    "key": "ABC-0000",           // 自然鍵
+    "key": "DEMO-102",          // 自然鍵
     "title": "…",
-    "epicCode": "DEMO-BOARD",  // 對應 epics[].code
+    "epicCode": "DEMO-BOARD",   // 對應 epics[].code
     "checkpoint": 34,            // 週號,或 "backlog"
     "jiraStatus": "Dev Done",    // 或直接給 status: "testing"
     "dueDate": "2026-08-31",     // 以下皆可省略
-    "githubPrs": ["https://github.com/owner/repo/pull/9097"],
+    "githubPrs": ["https://github.com/owner/repo/pull/104"],
     "tag": "BE",
     "assignee": "alice"
   }],
-  "pruneEpics": ["DEMO-BOARD"] // 刪掉這些 epic 底下、payload 沒提到的 ticket
+  "pruneEpics": ["DEMO-BOARD"]  // 刪掉這些 epic 底下、payload 沒提到的 ticket
 }
 ```
 
@@ -101,7 +101,7 @@ node scripts/checkpoint-week.mjs --windows 2026-04-07 2026-08-15   # JQL 週視�
 node scripts/checkpoint-week.mjs --checkpoints 11 29     # payload 的 checkpoints
 ```
 
-Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 與 `data/example-epic.json` 都是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了來源與每一項轉換規則。
+Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。產出的 payload 檔頭用 `_source` / `_jql` / `_notes` 記錄來源與每一項轉換規則。`data/example-epic.json` 是格式範例(內容全為虛構)。
 
 **Atlassian MCP 的分頁上限**:`searchJiraIssuesUsingJql` 每次最多只回 5 筆,而且超過時 `pageInfo.endCursor` 是 `null` —— 沒有游標可以往下翻。要拿完整清單就看 `remainingCount`(它給的是真正的總數),再用 `AND key NOT IN (已取得的 key…)` 把已知的排掉重跑。另外指定 `fields` 並不會擋掉 `description`,描述很長的 epic 要有心理準備。
 
@@ -115,15 +115,15 @@ parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下�
 
 **沒有 Dev Done 的票改看 resolution date。** spec、prototype、設計稿、測試案例、POC 這類工作根本不經過 Dev Done 欄位,只靠第一條規則會讓它們即使在 Jira 已經 Done 也全部堆進 backlog。所以第二步改用 Jira 的 resolution date 決定週次,並把來源日期記在該張票的 `resolvedAt` 欄位裡備查(這個欄位只存在檔案中,不會寫進資料庫)。
 
-兩條都沒有的票才留在 backlog —— 那是真正還沒做完的工作該待的地方。ABC-0000 的 12 張 backlog 票就是這種情況(Issue Open / Doing / Ready for Review,皆未 resolved)。
+兩條都沒有的票才留在 backlog —— 那是真正還沒做完的工作該待的地方(Issue Open / Doing / Ready for Review 這類尚未 resolved 的票)。
 
 **PR 連結的來源**:Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),`gh` CLI 沒安裝,直接打 api.github.com 也被 proxy 擋(403)。可行的是 GitHub MCP 的 PR 搜尋,它可以直接指定 repo,不需要 `add_repo`(後者拒絕跨 owner 掛載):
 
 ```
-repo:<owner>/<repo> "ABC-0000"
+repo:<owner>/<repo> "DEMO-102"
 ```
 
-**票號一定要加引號。** 不加引號時 GitHub 會把 `ABC-0000` 拆成 `ca` + `15893`,曾誤中一個早於該票、不可能引用它的 PR #7314。
+**票號一定要加引號。** 不加引號時 GitHub 會把 `ABC-15893` 這種票號拆成 `abc` + `15893`,實際踩過一次:配到一個早於該票、不可能引用它的舊 PR。
 
 搜到的是「內文提及該票號」的 PR,不等於「實作它」的 PR,而且一張票可能對到多個(所以欄位是 `githubPrs` 陣列)。
 
@@ -186,8 +186,7 @@ scripts/
   jira-status.mjs     Jira 狀態名稱 → 四個燈號
   checkpoint-week.mjs 日期 ↔ 週次、JQL 週視窗、checkpoint 條目
 data/
-  example-epic.json      從 Jira epic ABC-0000 匯出的 27 張工單
-  example-epic.json      從 Jira epic ABC-0000 匯出的 39 張工單
+  example-epic.json  合成的範例 payload(格式參考;真實 payload 不進版控)
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具(以字串比較避開時區偏移)

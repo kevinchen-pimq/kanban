@@ -5,7 +5,7 @@ description: >-
   the epic's children, work out which week checkpoint each ticket belongs in, find
   its GitHub PRs, write a data/<epic>.json payload, and import it to dev and
   production. Use this whenever the user wants an epic or its tickets on the board
-  — "import ABC-0000", "把這個 epic 匯入看板", "追蹤這個 epic", "update the board",
+  — "import ABC-1234", "把這個 epic 匯入看板", "追蹤這個 epic", "update the board",
   "re-sync the tickets", "add this project as a column" — and also when they want to
   change how tickets are bucketed into weeks, or when hand-editing data/*.json or
   scripts/import-board.mjs. The Jira and GitHub query quirks documented here are
@@ -23,7 +23,7 @@ Two things make this harder than it looks, and both fail *quietly*:
 
 - The Atlassian MCP search silently caps results and gives you no cursor to get
   the rest, so a naive read returns a plausible-looking partial ticket list.
-- GitHub's unquoted search splits `ABC-0000` into `ca` + `15893` and matches
+- GitHub's unquoted search splits `ABC-1234` into `abc` + `1234` and matches
   unrelated PRs, so you get real URLs attached to the wrong tickets.
 
 Neither raises an error. Follow the steps below and check the counts.
@@ -57,7 +57,7 @@ number down; it is your check at the end.
 To actually collect the rest, exclude what you already have and re-run:
 
 ```
-parent = <EPIC-KEY> AND key NOT IN (CA-1, CA-2, …) ORDER BY key ASC
+parent = <EPIC-KEY> AND key NOT IN (ABC-1, ABC-2, …) ORDER BY key ASC
 ```
 
 Repeat until a page comes back short. Stop when your list length equals the total
@@ -115,7 +115,7 @@ can see why it landed there. `resolvedAt` is deliberately not stored in Convex �
 `scripts/import-board.mjs` forwards fields by name and drops it.
 
 ```
-key IN (CA-1, CA-2, …)     with fields: ["resolutiondate"]
+key IN (ABC-1, ABC-2, …)     with fields: ["resolutiondate"]
 ```
 
 Use the local date part of the timestamp (`2026-07-24T11:17+0800` → `2026-07-24`);
@@ -149,11 +149,11 @@ proxy (403). Use the GitHub MCP PR search, which takes a `repo:` qualifier and
 needs no `add_repo`:
 
 ```
-repo:<owner>/<repo> "ABC-0000"
+repo:<owner>/<repo> "ABC-1234"
 ```
 
-**Quote the ticket key.** Unquoted, GitHub tokenises `ABC-0000` into `ca` and
-`15893` and will happily return a PR that predates the ticket. This produced a
+**Quote the ticket key.** Unquoted, GitHub tokenises `ABC-1234` into `abc` and
+`1234` and will happily return a PR that predates the ticket. This produced a
 confidently wrong mapping once; the quotes are the whole fix.
 
 One search per key, `fields: ["number", "html_url"]` to keep responses small. A
@@ -185,7 +185,9 @@ judgement calls live — which tickets matched two windows, which fell back to
 tier 2, what the PR search does and doesn't mean. Someone reading the row six
 months from now cannot reconstruct that from the data.
 
-Look at `data/example-epic.json` for a worked example.
+Look at `data/example-epic.json` for the format. Real payloads are gitignored
+— they carry ticket titles, assignee names and internal repo URLs, so keep
+yours outside the repo and point the importer at that path.
 
 ## Step 5 — Validate, import, verify
 

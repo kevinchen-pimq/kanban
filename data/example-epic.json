@@ -1,0 +1,104 @@
+{
+  "_source": "https://example.atlassian.net/browse/DEMO-100",
+  "_jql": "parent = DEMO-100",
+  "_fetchedAt": "2026-08-14",
+  "_notes": [
+    "Synthetic sample. Every key, title, person and pull request here is made up;",
+    "it exists to document the payload format and to give a new deployment",
+    "something to render. Real payloads are gitignored — keep yours outside the",
+    "repo and point the importer at it.",
+    "",
+    "It also shows the checkpoint rules the importer expects:",
+    "  DEMO-104 carries resolvedAt, meaning it never entered Dev Done and took",
+    "  its week from the Jira resolution date instead.",
+    "  DEMO-107 has neither signal, so it sits in the backlog row.",
+    "  W32 is declared but empty — a real week with nothing delivered, kept",
+    "  visible rather than closed up.",
+    "",
+    "resolvedAt is provenance only. scripts/import-board.mjs forwards ticket",
+    "fields by name and never sends it to Convex."
+  ],
+  "epics": [
+    {
+      "code": "DEMO-BOARD",
+      "name": "Demo Epic：範例專案",
+      "accent": "indigo",
+      "order": 0
+    }
+  ],
+  "checkpoints": [
+    { "kind": "week", "weekNumber": 30, "startDate": "2026-07-28", "endDate": "2026-08-03", "order": 30 },
+    { "kind": "week", "weekNumber": 31, "startDate": "2026-08-04", "endDate": "2026-08-10", "order": 31 },
+    { "kind": "week", "weekNumber": 32, "startDate": "2026-08-11", "endDate": "2026-08-17", "order": 32 },
+    { "kind": "week", "weekNumber": 33, "startDate": "2026-08-18", "endDate": "2026-08-24", "order": 33 },
+    { "kind": "backlog", "label": "未定排程 / Backlog Pool", "order": 99 }
+  ],
+  "pruneEpics": ["DEMO-BOARD"],
+  "tickets": [
+    {
+      "key": "DEMO-101",
+      "title": "[BE] Set up the service skeleton",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 30,
+      "jiraStatus": "Done",
+      "assignee": "alice",
+      "githubPrs": ["https://github.com/acme/platform/pull/101"]
+    },
+    {
+      "key": "DEMO-102",
+      "title": "[BE] Schema and seed data",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 30,
+      "jiraStatus": "Dev Done",
+      "assignee": "alice",
+      "githubPrs": [
+        "https://github.com/acme/platform/pull/104",
+        "https://github.com/acme/platform/pull/109"
+      ]
+    },
+    {
+      "key": "DEMO-103",
+      "title": "[FE] 清單頁面",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 31,
+      "jiraStatus": "Dev Test Done",
+      "assignee": "bob",
+      "dueDate": "2026-08-10",
+      "githubPrs": ["https://github.com/acme/platform/pull/112"],
+      "tag": "FE"
+    },
+    {
+      "key": "DEMO-104",
+      "title": "Spec v1",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 31,
+      "jiraStatus": "Done",
+      "assignee": "carol",
+      "resolvedAt": "2026-08-07"
+    },
+    {
+      "key": "DEMO-105",
+      "title": "[FE] 詳情頁面",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 33,
+      "jiraStatus": "Ready for Review",
+      "assignee": "bob",
+      "githubPrs": ["https://github.com/acme/platform/pull/120"]
+    },
+    {
+      "key": "DEMO-106",
+      "title": "[BE] Rate limiting",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": 33,
+      "jiraStatus": "Doing",
+      "assignee": "alice"
+    },
+    {
+      "key": "DEMO-107",
+      "title": "[BE] Audit log export",
+      "epicCode": "DEMO-BOARD",
+      "checkpoint": "backlog",
+      "jiraStatus": "Issue Open"
+    }
+  ]
+}
