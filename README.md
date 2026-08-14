@@ -91,6 +91,16 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
 
 ### 從 Jira 匯入
 
+整套流程寫成了 skill:`.claude/skills/jira-board-import/`。要把某個 epic 上板時直接用它,裡面記了下面這些規則,以及幾個**不會報錯、只會給錯答案**的坑(MCP 的 5 筆上限與 null cursor、GitHub 未加引號的搜尋)。
+
+週次換算一律走腳本,不要心算:
+
+```bash
+node scripts/checkpoint-week.mjs 2026-07-24              # 這天屬於哪一週
+node scripts/checkpoint-week.mjs --windows 2026-04-07 2026-08-15   # JQL 週視窗
+node scripts/checkpoint-week.mjs --checkpoints 11 29     # payload 的 checkpoints
+```
+
 Jira 那一段目前是手動的:透過 Atlassian MCP 讀 `parent = <EPIC-KEY>`,把結果寫成上面格式的 JSON 存進 `data/`,再跑匯入腳本。`data/example-epic.json` 與 `data/example-epic.json` 都是這樣產生的,檔頭的 `_source` / `_jql` / `_notes` 記錄了來源與每一項轉換規則。
 
 **Atlassian MCP 的分頁上限**:`searchJiraIssuesUsingJql` 每次最多只回 5 筆,而且超過時 `pageInfo.endCursor` 是 `null` —— 沒有游標可以往下翻。要拿完整清單就看 `remainingCount`(它給的是真正的總數),再用 `AND key NOT IN (已取得的 key…)` 把已知的排掉重跑。另外指定 `fields` 並不會擋掉 `description`,描述很長的 epic 要有心理準備。
@@ -172,8 +182,9 @@ convex/
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
   convex.config.ts   掛載 static-hosting component
 scripts/
-  import-board.mjs   驗證 payload 並呼叫 data:importBoard
-  jira-status.mjs    Jira 狀態名稱 → 四個燈號
+  import-board.mjs    驗證 payload 並呼叫 data:importBoard
+  jira-status.mjs     Jira 狀態名稱 → 四個燈號
+  checkpoint-week.mjs 日期 ↔ 週次、JQL 週視窗、checkpoint 條目
 data/
   example-epic.json      從 Jira epic ABC-0000 匯出的 27 張工單
   example-epic.json      從 Jira epic ABC-0000 匯出的 39 張工單
