@@ -47,10 +47,9 @@ npm run deploy:dev   # 先在 dev deployment 做煙霧測試
 
 | 文件 | 內容 |
 | --- | --- |
-| [docs/updating-board-data.md](docs/updating-board-data.md) | 更新看板資料：匯入指令、payload 格式、刪除 epic |
 | [docs/data-model.md](docs/data-model.md) | 資料模型：三張表、狀態燈號、刻意的設計決定 |
 | [docs/architecture.md](docs/architecture.md) | 專案結構與前端實作細節（lazy loading、版面） |
 | [docs/progress.md](docs/progress.md) | 當前進度與尚未實作的範圍 |
-| [.claude/skills/jira-board-import/](.claude/skills/jira-board-import/SKILL.md) | 從 Jira 匯入 epic 的完整流程（Agent 用 skill，匯入腳本也在這裡） |
+| [.claude/skills/jira-board-import/](.claude/skills/jira-board-import/SKILL.md) | 從 Jira 匯入 epic 的完整流程；匯入腳本與 [payload 格式／更新看板資料](.claude/skills/jira-board-import/references/updating-board-data.md) 都在這裡 |
 
 給 AI Agent 的入口是 [CLAUDE.md](CLAUDE.md) 與 [AGENTS.md](AGENTS.md)。

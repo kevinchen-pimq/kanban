@@ -1,16 +1,12 @@
 ---
 name: jira-board-import
 description: >-
-  Pull a Jira epic's tickets into the Epic × Checkpoint board on Convex: enumerate
-  the epic's children, work out which week checkpoint each ticket belongs in, find
-  its GitHub PRs, write a data/<epic>.json payload, and import it to dev and
-  production. Use this whenever the user wants an epic or its tickets on the board
-  — "import ABC-1234", "把這個 epic 匯入看板", "追蹤這個 epic", "update the board",
-  "re-sync the tickets", "add this project as a column" — and also when they want to
-  change how tickets are bucketed into weeks, or when hand-editing payload JSON or
-  the import scripts bundled in this skill. The Jira and GitHub query quirks
-  documented here are silent-wrong-answer traps rather than errors, so reach for
-  this skill even when the task looks like a small edit.
+  Use whenever a Jira epic or its tickets should get onto the Epic × Checkpoint
+  board — "import ABC-1234", "把這個 epic 匯入看板", "追蹤這個 epic", "update the
+  board", "re-sync the tickets" — and also when changing how tickets are bucketed
+  into weeks, updating board data, or editing payload JSON or the import scripts
+  bundled in this skill. Reach for it even when the task looks like a small edit;
+  the query quirks documented here fail silently, not loudly.
 ---
 
 # Importing a Jira epic onto the board
@@ -18,7 +14,7 @@ description: >-
 Turn one Jira epic into a payload JSON file and import it. Epics are columns,
 week checkpoints are rows, each cell holds that epic's tickets for that week.
 
-Payload schema and import rules: `docs/updating-board-data.md`.
+Payload schema and import rules: `references/updating-board-data.md`.
 This skill bundles the tooling in `scripts/` (run from the repo root):
 
 | Script | npm alias | Does |
@@ -103,7 +99,7 @@ implements-this list — say so in `_notes`. Multiple PRs per ticket is normal
 
 ## Step 4 — Write the payload
 
-Follow the schema in `docs/updating-board-data.md`; `data/example-epic.json`
+Follow the schema in `references/updating-board-data.md`; `data/example-epic.json`
 shows the format. The rules that bite: optional fields are cleared when
 absent, `pruneEpics` makes the payload the whole truth for an epic, unmapped
 `jiraStatus` fails the import on purpose, unknown ticket fields are rejected.

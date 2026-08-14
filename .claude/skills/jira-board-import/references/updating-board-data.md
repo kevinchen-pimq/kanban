@@ -62,4 +62,4 @@ npm run week -- --checkpoints 11 29           # payload 的 checkpoints 條目
 
 ## 從 Jira 匯入
 
-把某個 epic 上板的完整流程（列舉子票、判定週次、找 GitHub PR、產 payload、匯入驗證）寫成了 skill：[`.claude/skills/jira-board-import/`](../.claude/skills/jira-board-import/SKILL.md)。裡面記了幾個**不會報錯、只會給錯答案**的坑（Atlassian MCP 的 5 筆上限與 null cursor、GitHub 未加引號的票號搜尋），要動匯入流程前先讀它。
+把某個 epic 上板的完整流程（列舉子票、判定週次、找 GitHub PR、產 payload、匯入驗證）見本 skill 的 [SKILL.md](../SKILL.md)。裡面記了幾個**不會報錯、只會給錯答案**的坑（Atlassian MCP 的 5 筆上限與 null cursor、GitHub 未加引號的票號搜尋），要動匯入流程前先讀它。

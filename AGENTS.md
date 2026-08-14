@@ -21,11 +21,22 @@ npm run deploy       # 建置 + 推 production + 上傳靜態檔
 | 要做的事 | 先讀 |
 | --- | --- |
 | 了解專案、啟動開發 | `README.md` |
-| 更新看板資料、payload 格式 | `docs/updating-board-data.md` |
+| 更新看板資料、payload 格式 | `.claude/skills/jira-board-import/references/updating-board-data.md` |
 | 動 schema 或狀態燈號 | `docs/data-model.md` |
 | 改前端（lazy loading、版面）或找檔案 | `docs/architecture.md` |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
+
+## Coding 原則
+
+- **保持簡單，帶著 YAGNI 的精神**——除非另有指示，不要為想像中的需求先鋪路。
+- **善用型別安全。** TypeScript 的型別是工具，不是負擔。
+- **不要怕提大膽的想法**——只要它能實質改善這份工作，就值得提出來。
+- **測試是好事，但要聚焦。** 無止盡的煙霧測試、為已刪除功能寫的「回歸測試」
+  價值低得多；測試要精準，不要灌水。
+- **註解用來說明功能與用法。** 不必逐行註解，但在函式、類別定義上方簡潔描述
+  它怎麼被使用是好事。
+- **註解要跟著程式碼更新。** 改動時同步維護，過期的註解比沒有更糟。
 
 ## 不可違背的慣例
 

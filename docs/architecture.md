@@ -17,9 +17,10 @@ src/
   components/ui/     shadcn/ui 元件
 data/
   example-epic.json  合成的範例 payload（格式參考；真實 payload 不進版控）
-docs/                本目錄：資料模型、更新流程、進度
+docs/                本目錄：資料模型、專案結構、進度
 .claude/skills/
-  jira-board-import/ 從 Jira 匯入的 skill；匯入／週次／狀態對應腳本都在它的 scripts/
+  jira-board-import/ 從 Jira 匯入的 skill；匯入／週次／狀態對應腳本在它的 scripts/，
+                     payload 格式與更新看板資料的說明在它的 references/
 ```
 
 `convex/_generated/` 有進版控，所以剛 clone 下來不需要先登入 Convex 就能 `npm run build`。
