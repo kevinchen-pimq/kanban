@@ -16,6 +16,31 @@ npm run board        # dev 看板摘要
 npm run deploy       # 建置 + 推 production + 上傳靜態檔
 ```
 
+## Convex 認證（每個 remote session 都要做一次）
+
+Remote 容器每次都是全新的，沒有 Convex 憑證；要讀寫團隊 deployment（匯入、
+`npm run board`、部署）前先完成登入。登入走 device flow——不能開瀏覽器沒關係，
+把連結交給使用者開啟驗證即可：
+
+```bash
+npx convex login --no-open --device-name "claude-code-remote-kanban"
+#   （非互動終端必須給 --device-name，否則會卡在輸入提示）
+# → 背景執行它，從輸出取得 https://auth.convex.dev/device?user_code=XXXX-XXXX
+# → 把連結貼給使用者，請他們在瀏覽器完成驗證（約 5 分鐘內有效）
+# → 成功後憑證寫入 /root/.convex/config.json
+
+npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deployment
+```
+
+之後 `npm run import` / `npm run board` 直接可用，production 操作加 `--prod`。
+注意：
+
+- 登入後若被問「要不要 link 既有的 anonymous deployment」，忽略它——那是本地
+  測試用的拋棄式 deployment。
+- 憑證跟著容器走，session 結束就消失，下個 session 重來一次。
+- 只想在本地驗證、不碰團隊資料時，用 `CONVEX_AGENT_MODE=anonymous npx convex dev`
+  起匿名本地 deployment 即可，不需要登入。
+
 ## 文件地圖
 
 | 要做的事 | 先讀 |
