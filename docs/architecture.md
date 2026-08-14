@@ -6,14 +6,21 @@
 convex/
   schema.ts          資料表與共用 validator
   board.ts           board:get — 依時間區間回傳看板的單一 reactive query
+                     board:moveTicket — 唯一的公開寫入（拖曳改週次，無認證）
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
   convex.config.ts   掛載 static-hosting component
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具（以字串比較避開時區偏移）
   lib/github.ts      PR 網址 → #編號 徽章文字
+  lib/jira.ts        ticket key → Jira browse 網址（站台網址只寫在這裡）
+  lib/assignee.ts    負責人頭像的縮寫與顏色（姓名 hash → 調色盤）
+  lib/scroll.ts      捲到本週那一列（開場自動捲動與按鈕共用）
+  lib/dnd.ts         拖曳的資料型別、暫存區 id、碰撞判定
   components/        BoardHeader / BoardMatrix / TicketCard / StatusDot
                      MultiSelectFilter — 狀態與負責人共用的多選下拉
+                     AssigneeAvatar — 卡片與篩選選單共用的負責人頭像
+                     DraggableTicket / StagingTray — 拖曳與暫存區
   components/ui/     shadcn/ui 元件
 data/
   example-epic.json  合成的範例 payload（格式參考；真實 payload 不進版控）
@@ -31,7 +38,7 @@ docs/                本目錄：資料模型、專案結構、進度
 
 前端首次只載入近 8 週，每次再往前拉 8 週，`hasOlder` 變 false 就停止請求並收起入口。四個實作細節：
 
-- **開場捲到本週**：先載入的 8 週大多是歷史，停在最上面等於先給讀者最舊的一列。所以第一次拿到資料後會把本週那一列捲到欄位標題正下方（標題是 sticky，要扣掉它的高度否則會被蓋住）。只做一次，之後捲動位置就完全屬於讀者。若今天不落在任何一週（資料過期），就維持在最上面不動。
+- **開場捲到本週**：先載入的 8 週大多是歷史，停在最上面等於先給讀者最舊的一列。所以第一次拿到資料後會把本週那一列捲到欄位標題正下方（標題是 sticky，要扣掉它的高度否則會被蓋住）。只做一次，之後捲動位置就完全屬於讀者——要回到本週，用左上角落格的按鈕。按鈕和開場捲動共用 `scrollToCurrentWeek()`（`src/lib/scroll.ts`），所以兩者停在完全相同的位置；資料裡沒有本週時它回傳 false，按鈕也就直接 disabled。
 - **入口是按鈕，不只是捲動手勢**：看板初次繪製時 `scrollTop` 已經是 0，此時往上滑不會觸發 `scroll` 事件，單靠捲動偵測會讓讀者完全載不到更早的週次。所以頂端那一列是可點的按鈕，捲動偵測只是額外的便利路徑。
 - **維持捲動位置**：往上補列會讓 `scrollHeight` 變大，若不處理，讀者會被推到頁面下方。所以在請求前記下「距底距離」，DOM 更新後用 `useLayoutEffect` 還原，原本在看的那幾列就留在原處。
 - **不閃白**：Convex 的 `useQuery` 在參數改變時會先回 `undefined`。直接用會讓整個看板在載入更早週次時消失一瞬間，所以保留上一次的結果繼續畫，只在頂端顯示載入中。
@@ -45,3 +52,20 @@ Y 軸的週欄位是 48px 寬的窄邊欄，標籤以 `writing-mode: vertical-rl
 工具列有兩個多選篩選，共用 `MultiSelectFilter`：**狀態**與**負責人**。兩者都是不勾選代表不過濾（顯示全部），勾選則取聯集，彼此再取交集。狀態選單每一項都是「燈號 + 完整狀態名稱」，所以它同時是四個燈號的圖例。
 
 負責人選項是從當下看板資料推導的，不是寫死的名單——選單裡不會出現沒有票的人。沒有負責人的票由「未指派」這個選項涵蓋（內部以 `null` 表示，不是佔位字串）。右側的計數在有篩選時顯示 `已顯示 / 總數`。
+
+## 負責人顏色
+
+負責人以圓形頭像呈現：白色縮寫字疊在一個屬於這個人的顏色上（`AssigneeAvatar`）。顏色不存也不按載入順序發，而是用姓名（去空白、轉小寫）的 FNV-1a hash 去取 10 色調色盤（`src/lib/assignee.ts`）——同一個人在任何 deployment、任何 session 都是同一個顏色，掃一整欄才有意義。調色盤裡每個顏色都通過白字 4.5:1 的對比檢查；未指派用中性的 slate。
+
+顏色是行內 style 而不是 Tailwind class：class 名稱要在執行期由 hash 組出來，Tailwind 掃不到也就不會產生對應的 CSS。人數超過 10 位時會有人撞色，這是 hash 的必然結果，換成「按出現順序發色」才能避免——但那樣顏色會隨資料變動，代價更大。
+
+## 拖曳改週次與暫存區
+
+拖曳用 `@dnd-kit/core`：`DndContext` 在 `App`，卡片是 `DraggableTicket`，每個 (checkpoint, epic) 格子是 droppable。四個要點：
+
+- **只能上下移動，不能左右換欄。** 格子在 hover 時自己比對「拖曳中的卡片是哪個 epic」：同欄標靛藍並顯示「放這裡」，別的 epic 標紅顯示「不能跨 Epic」且放下無效。同一條規則在 `board:moveTicket` 再驗一次，前端的視覺提示不是唯一的防線。
+- **暫存區。** 拖曳一開始，畫面底部中央會出現暫存區；把卡片丟進去就先從矩陣裡「拿起來」（純前端狀態，沒有任何寫入），捲到目標週次後再從暫存區拖出去放。暫存區在還有卡片或還在拖曳時保持顯示。它浮在矩陣上方，所以碰撞判定用 `trayFirstCollision`：指標落在暫存區內時，優先給暫存區，不然 `pointerWithin` 有機會把 drop 判給底下被遮住的格子。
+- **暫存區的卡片還沒有移動。** 只有放進格子才會呼叫 mutation；關掉分頁等於什麼都沒發生。每張暫存卡片記著自己的 epic，所以繞這一圈之後同欄限制照樣成立。
+- **樂觀更新。** 放下的瞬間先用 `withOptimisticUpdate` 就地把 `checkpointId` 改掉，卡片同一個 frame 就出現在新的列，不用等 round trip；失敗時 Convex 會自己回滾，前端在底部顯示紅色訊息。暫存卡片是從整個時間窗（不是篩選後的清單）推導出來的，所以改篩選不會讓暫存的卡片憑空消失。
+
+篩選開著時拖曳操作的是「看得到的卡片」——被篩掉的卡片不在畫面上，也就不會被拖到。

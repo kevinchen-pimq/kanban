@@ -24,3 +24,11 @@ Jira 狀態名稱 → 燈號的完整對應表在 `.claude/skills/jira-board-imp
 注意 `weekNumber` 是團隊自己的 checkpoint 編號，**不是 ISO 週號**（W31 對應的 ISO 週其實是 32），而且一週的區間是週二到週一——所以編號用存的，不用算的。
 
 **逾期也是算出來的。** 卡片沒有 `isOverdue` 欄位；`isOverdue()` 判斷 `dueDate` 早於今天且狀態不是 `done`，所以紅色標籤不會過期失準。
+
+## 唯一的公開寫入：`board:moveTicket`
+
+除了匯入（`convex/data.ts` 全是 internal function）之外，資料只有一條對外開放的寫入路徑：`convex/board.ts` 的 `moveTicket({ ticketId, epicId, checkpointId })`，看板的拖曳功能用它把卡片換到另一個 checkpoint 列。它只改 `checkpointId`；`epicId` 是「這張卡必須留在哪一欄」的護欄，和卡片現在的 epic 不符就整個拒絕，所以任何呼叫者都不可能靠它換欄位。
+
+這個 mutation **沒有認證**——看板前面沒有登入機制，任何打得開網站的人都能移動卡片。這是為了內部小團隊的拖曳體驗刻意接受的取捨，要對外開放就得先在這個 handler 加檢查。
+
+移動不會變成新的事實來源：payload 仍然決定卡片屬於哪一週，所以之後對這個 epic 做一次完整重新匯入，手動拖過的位置會被 payload 蓋回去。

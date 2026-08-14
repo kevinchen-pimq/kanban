@@ -2,7 +2,8 @@
 
 Epic × Checkpoint 看板：Epic 為欄、週 checkpoint 為列的矩陣看板。前端 React +
 TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex。
-看板唯讀，資料由匯入腳本寫入，不回寫 Jira。
+資料由匯入腳本寫入，不回寫 Jira；看板上唯一能改資料的操作是拖曳卡片換週次
+（`board:moveTicket`，同 Epic 欄位內、無認證），payload 仍是事實來源。
 
 ## 常用指令
 
@@ -82,6 +83,9 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   不要在 payload 裡硬塞 `status` 繞過去；匯入失敗是刻意設計。
 - **checkpoint 列順序由日期推導**，`convex/board.ts` 會忽略 payload 的
   `order`——看到「列排錯」先想到這裡，不是 bug。
+- **公開寫入只有 `board:moveTicket` 一個，而且沒有認證。** 匯入相關函式一律留在
+  internal（`convex/data.ts`）。要再加公開 mutation 前先想清楚：任何人打開網站
+  就能呼叫它。
 - `convex/_generated/` 有進版控；改了 `convex/` 之後要讓 `convex dev`
   重新產生並一起提交。
 - 日期一律用 ISO 字串比較（見 `src/lib/dates.ts`），避免時區偏移。
