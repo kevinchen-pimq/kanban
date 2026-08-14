@@ -12,11 +12,11 @@
  * lands a ticket in the wrong row — a real off-by-one week happened that way.
  *
  * Usage:
- *   node scripts/checkpoint-week.mjs 2026-07-24 [...more dates]
+ *   npm run week -- 2026-07-24 [...more dates]
  *       -> the week each date falls in
- *   node scripts/checkpoint-week.mjs --checkpoints 11 29
+ *   npm run week -- --checkpoints 11 29
  *       -> checkpoint entries for a payload, W11..W29 inclusive
- *   node scripts/checkpoint-week.mjs --windows 2026-04-07 2026-08-15
+ *   npm run week -- --windows 2026-04-07 2026-08-15
  *       -> the (Tue, next Tue) pairs to sweep with a "CHANGED TO" JQL query
  */
 
