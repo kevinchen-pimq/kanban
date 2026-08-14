@@ -10,7 +10,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "import": "node scripts/import-board.mjs",
+    "import": "node .claude/skills/jira-board-import/scripts/import-board.mjs",
+    "week": "node .claude/skills/jira-board-import/scripts/checkpoint-week.mjs",
     "board": "convex run data:summary",
     "deploy": "node node_modules/@convex-dev/static-hosting/dist/cli/index.js deploy",
     "deploy:dev": "node node_modules/@convex-dev/static-hosting/dist/cli/index.js upload --build"

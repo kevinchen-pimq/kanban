@@ -56,7 +56,7 @@ export function toStatusLight(jiraStatus) {
   if (!light) {
     throw new Error(
       `Unmapped Jira status "${jiraStatus}". Add it to ` +
-        `scripts/jira-status.mjs (JIRA_STATUS_TO_LIGHT).`,
+        `.claude/skills/jira-board-import/scripts/jira-status.mjs (JIRA_STATUS_TO_LIGHT).`,
     );
   }
   return light;

@@ -15,7 +15,7 @@
     "  W32 is declared but empty — a real week with nothing delivered, kept",
     "  visible rather than closed up.",
     "",
-    "resolvedAt is provenance only. scripts/import-board.mjs forwards ticket",
+    "resolvedAt is provenance only. The importer (import-board.mjs) forwards ticket",
     "fields by name and never sends it to Convex."
   ],
   "epics": [

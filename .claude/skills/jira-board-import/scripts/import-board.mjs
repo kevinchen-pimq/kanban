@@ -2,9 +2,9 @@
 /**
  * Push a board payload file into Convex.
  *
- *   node scripts/import-board.mjs data/example-epic.json
- *   node scripts/import-board.mjs data/example-epic.json --prod
- *   node scripts/import-board.mjs data/example-epic.json --dry-run
+ *   npm run import -- data/example-epic.json
+ *   npm run import -- data/example-epic.json --prod
+ *   npm run import -- data/example-epic.json --dry-run
  *
  * The payload is normalised and validated here so mistakes surface with a file
  * and a ticket key attached, rather than as a validator error from the server.
@@ -26,7 +26,7 @@
  *   }
  *
  * Tickets may carry either `status` (already one of the four lights) or
- * `jiraStatus` (the raw Jira name, mapped via scripts/jira-status.mjs).
+ * `jiraStatus` (the raw Jira name, mapped via jira-status.mjs next to this file).
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -42,7 +42,7 @@ const prod = args.includes("--prod");
 const dryRun = args.includes("--dry-run");
 
 if (!file) {
-  console.error("Usage: node scripts/import-board.mjs <payload.json> [--prod] [--dry-run]");
+  console.error("Usage: npm run import -- <payload.json> [--prod] [--dry-run]");
   process.exit(1);
 }
 
