@@ -5,21 +5,23 @@
 ```
 convex/
   schema.ts          資料表與共用 validator
-  board.ts           board:get — 依時間區間回傳看板的單一 reactive query
+  board.ts           board:get — 依時間區間回傳看板（含 config）的單一 reactive query
                      board:moveTicket — 唯一的公開寫入（拖曳改週次，無認證）
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
+                     setConfig / getConfig — 看板設定（internal）
   convex.config.ts   掛載 static-hosting component
 src/
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具（以字串比較避開時區偏移）
   lib/github.ts      PR 網址 → #編號 徽章文字
-  lib/jira.ts        ticket key → Jira browse 網址（站台網址只寫在這裡）
-  lib/assignee.ts    負責人頭像的縮寫與顏色（姓名 hash → 調色盤）
+  lib/jira.ts        ticket key + config 的 base URL → Jira 網址（沒設定就回 null）
+  lib/assignee.ts    負責人頭像的縮寫與顏色（config 指定優先，其次姓名 hash）
   lib/scroll.ts      捲到本週那一列（開場自動捲動與按鈕共用）
   lib/dnd.ts         拖曳的資料型別、暫存區 id、碰撞判定
   components/        BoardHeader / BoardMatrix / TicketCard / StatusDot
                      MultiSelectFilter — 狀態與負責人共用的多選下拉
                      AssigneeAvatar — 卡片與篩選選單共用的負責人頭像
+                     BoardConfigProvider — 看板設定的 context（來自 board:get）
                      DraggableTicket / StagingTray — 拖曳與暫存區
   components/ui/     shadcn/ui 元件
 data/
@@ -53,11 +55,18 @@ Y 軸的週欄位是 48px 寬的窄邊欄，標籤以 `writing-mode: vertical-rl
 
 負責人選項是從當下看板資料推導的，不是寫死的名單——選單裡不會出現沒有票的人。沒有負責人的票由「未指派」這個選項涵蓋（內部以 `null` 表示，不是佔位字串）。右側的計數在有篩選時顯示 `已顯示 / 總數`。
 
-## 負責人顏色
+## 負責人顏色與 Jira 連結
 
-負責人以圓形頭像呈現：白色縮寫字疊在一個屬於這個人的顏色上（`AssigneeAvatar`）。顏色不存也不按載入順序發，而是用姓名（去空白、轉小寫）的 FNV-1a hash 去取 10 色調色盤（`src/lib/assignee.ts`）——同一個人在任何 deployment、任何 session 都是同一個顏色，掃一整欄才有意義。調色盤裡每個顏色都通過白字 4.5:1 的對比檢查；未指派用中性的 slate。
+負責人以圓形頭像呈現：白色縮寫字疊在一個屬於這個人的顏色上（`AssigneeAvatar`）。顏色照這個順序決定（`src/lib/assignee.ts`）：
 
-顏色是行內 style 而不是 Tailwind class：class 名稱要在執行期由 hash 組出來，Tailwind 掃不到也就不會產生對應的 CSS。人數超過 10 位時會有人撞色，這是 hash 的必然結果，換成「按出現順序發色」才能避免——但那樣顏色會隨資料變動，代價更大。
+1. **`config.assigneeColors` 指定的顏色**——團隊現有成員都在這裡，一人一色、手動指定、不會變。
+2. **姓名 hash 進 10 色調色盤**——名單裡沒有的人（例如剛加入、還沒有人去設定）也會拿到一個穩定的顏色：同一個姓名（去空白、轉小寫）在任何 deployment、任何 session 都 hash 到同一個顏色，不受載入順序影響。
+
+兩層都不依賴渲染順序，所以掃一整欄找「這是誰的卡」才有意義。調色盤每個顏色都通過白字 4.5:1 的對比檢查；未指派用中性的 slate。fallback 的顏色有機會和某個指定顏色相同（10 色的必然結果）——真的在意就把那個人加進 config。
+
+顏色是行內 style 而不是 Tailwind class：兩層的值都是執行期才知道，Tailwind 掃不到就不會產生對應的 CSS。
+
+卡片的 key 連到 `config.jiraBaseUrl` + key（`jiraIssueUrl()` 容忍結尾多餘的斜線）。**沒有設定 base URL 時 key 就是純文字**，不做成會 404 的連結。連結會 `stopPropagation` pointerdown，所以點連結不會變成拖曳的開始。
 
 ## 拖曳改週次與暫存區
 

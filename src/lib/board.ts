@@ -4,6 +4,8 @@ import { formatMonthDay, isBefore } from "./dates";
 export type Epic = Doc<"epics">;
 export type Checkpoint = Doc<"checkpoints">;
 export type Ticket = Doc<"tickets">;
+/** Board-wide settings; see `convex/schema.ts` and `data:setConfig`. */
+export type BoardConfig = Doc<"config">;
 export type TicketStatus = Ticket["status"];
 
 /** Order the status filter and legend are presented in. */

@@ -325,6 +325,67 @@ export const removeTickets = internalMutation({
   },
 });
 
+/**
+ * Set the board's configuration: the Jira site its keys link to, and the fixed
+ * avatar colour of each teammate.
+ *
+ * Internal on purpose. Board settings are an operator's job, done from a
+ * terminal against a chosen deployment:
+ *
+ * ```bash
+ * npx convex run data:setConfig '{"jiraBaseUrl":"https://example.atlassian.net/browse"}'
+ * npx convex run data:setConfig '{"assigneeColors":{"Some Person":"#7c2d12"}}'
+ * ```
+ *
+ * Only the fields given in the call change, so the two lines above are
+ * independent. `assigneeColors`, when given, *replaces* the whole map rather
+ * than merging into it — that is what makes removing a person possible, so
+ * always send the complete set.
+ */
+export const setConfig = internalMutation({
+  args: {
+    jiraBaseUrl: v.optional(v.string()),
+    assigneeColors: v.optional(v.record(v.string(), v.string())),
+  },
+  returns: v.object({ created: v.boolean() }),
+  handler: async (ctx, args) => {
+    const fields = {
+      ...(args.jiraBaseUrl !== undefined && { jiraBaseUrl: args.jiraBaseUrl }),
+      ...(args.assigneeColors !== undefined && {
+        assigneeColors: args.assigneeColors,
+      }),
+    };
+
+    const existing = await ctx.db.query("config").first();
+    if (existing) {
+      await ctx.db.patch(existing._id, fields);
+      return { created: false };
+    }
+    await ctx.db.insert("config", fields);
+    return { created: true };
+  },
+});
+
+/** Read the configuration back, to check what a `setConfig` actually stored. */
+export const getConfig = internalQuery({
+  args: {},
+  returns: v.union(
+    v.null(),
+    v.object({
+      jiraBaseUrl: v.optional(v.string()),
+      assigneeColors: v.optional(v.record(v.string(), v.string())),
+    }),
+  ),
+  handler: async (ctx) => {
+    const config = await ctx.db.query("config").first();
+    if (!config) return null;
+    return {
+      jiraBaseUrl: config.jiraBaseUrl,
+      assigneeColors: config.assigneeColors,
+    };
+  },
+});
+
 /** What is on the board right now, small enough to read in a terminal. */
 export const summary = internalQuery({
   args: {},

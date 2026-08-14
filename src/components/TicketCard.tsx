@@ -2,6 +2,7 @@ import { Clock, GitPullRequest, SquareCheckBig } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { AssigneeAvatar } from "@/components/AssigneeAvatar";
+import { useBoardConfig } from "@/components/BoardConfigProvider";
 import { StatusDot } from "@/components/StatusDot";
 import {
   Tooltip,
@@ -28,6 +29,7 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
   const overdue = isOverdue(ticket, today);
   const prs = ticket.githubPrs ?? [];
   const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0);
+  const jiraUrl = jiraIssueUrl(useBoardConfig()?.jiraBaseUrl, ticket.key);
 
   return (
     <article
@@ -87,17 +89,25 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
       )}
 
       <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
-        <a
-          href={jiraIssueUrl(ticket.key)}
-          target="_blank"
-          rel="noreferrer"
-          onPointerDown={keepPointerFromDrag}
-          title={`在 Jira 開啟 ${ticket.key}`}
-          className="inline-flex items-center gap-1 rounded font-mono font-medium text-slate-500 transition hover:text-indigo-700 hover:underline"
-        >
-          <SquareCheckBig className="size-2.5 text-indigo-500" aria-hidden />
-          <span>{ticket.key}</span>
-        </a>
+        {/* No Jira base URL configured: show the key, but not as a dead link. */}
+        {jiraUrl === null ? (
+          <span className="inline-flex items-center gap-1 font-mono font-medium text-slate-400">
+            <SquareCheckBig className="size-2.5 text-indigo-500" aria-hidden />
+            <span>{ticket.key}</span>
+          </span>
+        ) : (
+          <a
+            href={jiraUrl}
+            target="_blank"
+            rel="noreferrer"
+            onPointerDown={keepPointerFromDrag}
+            title={`在 Jira 開啟 ${ticket.key}`}
+            className="inline-flex items-center gap-1 rounded font-mono font-medium text-slate-500 transition hover:text-indigo-700 hover:underline"
+          >
+            <SquareCheckBig className="size-2.5 text-indigo-500" aria-hidden />
+            <span>{ticket.key}</span>
+          </a>
+        )}
         {ticket.assignee && (
           <div className="flex items-center gap-1">
             <AssigneeAvatar name={ticket.assignee} className="ring-1 ring-white" />

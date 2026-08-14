@@ -3,9 +3,17 @@
  *
  * The board shows the same person in several places (cards, the assignee
  * filter), and scanning a column for "whose cards are these" only works if a
- * person keeps one colour everywhere and between sessions. So the colour is
- * derived from the name rather than stored or assigned in load order: the same
- * name always hashes to the same palette entry, on every deployment.
+ * person keeps one colour everywhere and between sessions.
+ *
+ * There are two ways a name gets its colour, in this order:
+ *
+ *  1. The `assigneeColors` map in the board's Convex config, which is where the
+ *     team's actual people live. Those assignments are fixed by hand and never
+ *     move, whatever else changes.
+ *  2. Otherwise a colour derived from the name, so somebody who joins today
+ *     still gets a stable, distinct-looking avatar before an operator adds them
+ *     to the config. The same name always lands on the same palette entry, on
+ *     every deployment — nothing here depends on load order.
  */
 
 /**
@@ -47,13 +55,25 @@ function hash(value: string): number {
 /**
  * Background colour for an assignee's avatar, as a hex string.
  *
- * Returned as a value rather than a Tailwind class because the class would
- * have to be built from the hash at runtime, which Tailwind cannot see and so
- * would not emit. Names are matched case- and whitespace-insensitively so
- * "Alice" and "alice " are the same person.
+ * `configured` is the board config's name → colour map, which wins when it
+ * names this person; the key has to match the ticket's `assignee` string
+ * exactly. Anyone it does not name falls back to the hashed palette entry.
+ *
+ * Returned as a value rather than a Tailwind class: both the configured colours
+ * and the hashed ones are only known at runtime, and Tailwind cannot emit a
+ * class it never sees in the source.
  */
-export function assigneeColor(name: string | null | undefined): string {
+export function assigneeColor(
+  name: string | null | undefined,
+  configured?: Record<string, string>,
+): string {
   if (!name?.trim()) return UNASSIGNED_COLOR;
+
+  const fixed = configured?.[name];
+  if (fixed) return fixed;
+
+  // Fallback: hashed on the trimmed, lowercased name, so "Alice" and "alice "
+  // are one person even though the config would treat them as two keys.
   return AVATAR_COLORS[hash(name.trim().toLowerCase()) % AVATAR_COLORS.length];
 }
 

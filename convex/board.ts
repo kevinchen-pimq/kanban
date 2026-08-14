@@ -48,6 +48,13 @@ const ticketDoc = v.object({
   assignee: v.optional(v.string()),
 });
 
+const configDoc = v.object({
+  _id: v.id("config"),
+  _creationTime: v.number(),
+  jiraBaseUrl: v.optional(v.string()),
+  assigneeColors: v.optional(v.record(v.string(), v.string())),
+});
+
 /**
  * A week belongs to the window when any part of it falls on or after
  * `fromDate`. The backlog row has no dates and is always in: it is the
@@ -69,6 +76,12 @@ function isInWindow(checkpoint: Doc<"checkpoints">, fromDate: string | undefined
  *
  * Tickets are fetched per included checkpoint through the index rather than
  * scanned wholesale, so the cost tracks the window rather than the table.
+ *
+ * The board's configuration rides along in the same result rather than living in
+ * a query of its own: it is one small document that every card needs, and the
+ * board already has exactly one subscription to keep track of. A second query
+ * would add a second loading state, and cards would paint once without their
+ * Jira links and again with them.
  */
 export const get = query({
   args: {
@@ -79,15 +92,18 @@ export const get = query({
     epics: v.array(epicDoc),
     checkpoints: v.array(checkpointDoc),
     tickets: v.array(ticketDoc),
+    /** Board settings, or null when this deployment has none set yet. */
+    config: v.union(configDoc, v.null()),
     /** True when weeks exist before the window, i.e. scrolling up can load more. */
     hasOlder: v.boolean(),
     /** True when the ticket cap clipped the result, so the board can say so. */
     truncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const [epics, allCheckpoints] = await Promise.all([
+    const [epics, allCheckpoints, config] = await Promise.all([
       ctx.db.query("epics").withIndex("by_order").order("asc").collect(),
       ctx.db.query("checkpoints").withIndex("by_order").order("asc").take(CHECKPOINT_LIMIT),
+      ctx.db.query("config").first(),
     ]);
 
     // Row order is derived, not trusted. Weeks carry real dates, so sorting on
@@ -125,7 +141,14 @@ export const get = query({
       }
     }
 
-    return { epics, checkpoints, tickets, hasOlder, truncated };
+    return {
+      epics,
+      checkpoints,
+      tickets,
+      config: config ?? null,
+      hasOlder,
+      truncated,
+    };
   },
 });
 

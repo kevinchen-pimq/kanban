@@ -20,6 +20,18 @@ npx convex run data:removeEpics '{"codes":["OLD-EPIC"]}'
 
 看板上另外有一個公開、無認證的寫入端點：`board:moveTicket`，讓使用者拖曳卡片換 checkpoint 列（限同一個 epic 欄位）。它不影響匯入的正確性，但要記得**payload 才是事實來源**：對某個 epic 做一次完整重新匯入（尤其帶 `pruneEpics`）會把手動拖過的卡片放回 payload 指定的那一週。要保留某次手動調整，就把它寫回 payload 的 `checkpoint` 欄位。
 
+## 看板設定（不在 payload 裡）
+
+Jira 站台網址與每個人的頭像顏色不走 payload，存在 Convex 的 `config` 表，用 internal mutation 設定（細節見 [docs/data-model.md](../../../../docs/data-model.md)）：
+
+```bash
+npx convex run data:getConfig                 # 先看現在設了什麼
+npx convex run data:setConfig '{"jiraBaseUrl":"https://example.atlassian.net/browse"}'
+npx convex run data:setConfig '{"assigneeColors":{"Some Person":"#7c2d12"}}'
+```
+
+匯入時會遇到的兩件事：**新 deployment 沒有設定過 `jiraBaseUrl`，卡片上的 key 就只是純文字**（第一次部署完記得設）；**匯入帶進了新的負責人**時，他會先拿到 hash 出來的顏色，要固定就把完整的 `assigneeColors` 名單重送一次（這個欄位是整份取代，不是合併）。
+
 真實 payload 含工單標題、負責人姓名與內部 repo 連結，**不進版控**（`.gitignore` 擋掉 `data/*.json`）。它們的家是 **Google Drive 的 `Kanban` 資料夾**（用 Google Drive MCP 搜 `title = 'Kanban' and mimeType = 'application/vnd.google-apps.folder'` 就找得到）：匯入前從那裡下載到本地 `data/`，匯入成功後把更新過的 payload 傳回同一個資料夾，讓它保持是最新事實。`data/example-epic.json` 是唯一進版控的範例，內容全為虛構。
 
 ## payload 格式

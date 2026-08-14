@@ -81,4 +81,21 @@ export default defineSchema({
   })
     .index("by_key", ["key"])
     .index("by_checkpoint_and_epic", ["checkpointId", "epicId"]),
+
+  // Board-wide settings, as a single document (the first row wins).
+  //
+  // These are deployment settings rather than board data: the Jira site the
+  // keys link to, and the colour each teammate's avatar gets. Keeping them here
+  // instead of in the bundle means changing either one is a `npx convex run
+  // data:setConfig` away, with no rebuild and no deploy. Written only through
+  // that internal mutation; the board reads it as part of `board:get`.
+  config: defineTable({
+    // Jira browse root, e.g. "https://example.atlassian.net/browse". Absent
+    // means the cards show their key as plain text instead of a link.
+    jiraBaseUrl: v.optional(v.string()),
+    // Assignee name (exactly as it appears on the ticket) → hex colour, e.g.
+    // { "Some Person": "#7c2d12" }. Names absent from the map fall back to a
+    // colour derived from the name in the UI.
+    assigneeColors: v.optional(v.record(v.string(), v.string())),
+  }),
 });

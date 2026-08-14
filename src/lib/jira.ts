@@ -1,10 +1,20 @@
 /**
- * Every ticket on the board comes from the same Jira Cloud site, so the browse
- * URL is one constant here rather than a per-ticket field in the payload.
+ * The Jira site is a deployment setting, not a constant: it lives in the Convex
+ * `config` document (`npx convex run data:setConfig`), so pointing the board at
+ * a different Jira site takes no rebuild. That is why the base URL is a
+ * parameter here rather than a value in this file.
  */
-const JIRA_BROWSE_BASE = "https://pimq.atlassian.net/browse";
 
-/** Issue page for a ticket key: "CA-15807" -> ".../browse/CA-15807". */
-export function jiraIssueUrl(key: string): string {
-  return `${JIRA_BROWSE_BASE}/${encodeURIComponent(key)}`;
+/**
+ * Issue page for a ticket key, or null when the board has no `jiraBaseUrl`
+ * configured — the card then shows its key as plain text rather than a link
+ * that would 404.
+ */
+export function jiraIssueUrl(
+  baseUrl: string | undefined,
+  key: string,
+): string | null {
+  if (!baseUrl?.trim()) return null;
+  // Tolerate a trailing slash, since the value is typed by hand.
+  return `${baseUrl.trim().replace(/\/+$/, "")}/${encodeURIComponent(key)}`;
 }
