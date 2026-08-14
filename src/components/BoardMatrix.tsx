@@ -1,11 +1,21 @@
-import { TicketCard } from "@/components/TicketCard";
+import { useDroppable } from "@dnd-kit/core";
+import { LocateFixed } from "lucide-react";
+
+import { DraggableTicket } from "@/components/DraggableTicket";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   describeCheckpoints,
   type Checkpoint,
   type Epic,
   type Ticket,
 } from "@/lib/board";
+import { ticketDragData, type CellDropData } from "@/lib/dnd";
 import { cn } from "@/lib/utils";
+import type { Id } from "../../convex/_generated/dataModel";
 
 /**
  * Width of the rotated checkpoint gutter. Narrow like a spreadsheet's row
@@ -26,13 +36,17 @@ export function BoardMatrix({
   checkpoints,
   tickets,
   today,
+  onThisWeek,
 }: {
   epics: readonly Epic[];
   checkpoints: readonly Checkpoint[];
   tickets: readonly Ticket[];
   today: string;
+  /** Scrolls the current week's row into view; see `scrollToCurrentWeek`. */
+  onThisWeek: () => void;
 }) {
   const rows = describeCheckpoints(checkpoints, today);
+  const hasCurrentWeek = rows.some((row) => row.phase === "current");
 
   // Bucket once by cell instead of re-scanning the ticket list per cell.
   const byCell = new Map<string, Ticket[]>();
@@ -57,9 +71,27 @@ export function BoardMatrix({
         <tr>
           <th
             style={{ width: GUTTER_PX }}
-            className="sticky top-0 left-0 z-40 border-r border-b border-slate-200 bg-slate-100"
+            className="sticky top-0 left-0 z-40 border-r border-b border-slate-200 bg-slate-100 p-0"
           >
             <span className="sr-only">週 Checkpoint</span>
+            <div className="flex items-center justify-center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onThisWeek}
+                    disabled={!hasCurrentWeek}
+                    aria-label="捲動到本週"
+                    className="rounded-md p-1.5 text-slate-500 transition hover:bg-white hover:text-indigo-600 disabled:pointer-events-none disabled:opacity-30"
+                  >
+                    <LocateFixed className="size-4" aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {hasCurrentWeek ? "捲動到本週" : "目前的資料沒有包含本週"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </th>
           {epics.map((epic) => (
             <th
@@ -118,36 +150,80 @@ export function BoardMatrix({
                 </div>
               </th>
 
-              {epics.map((epic) => {
-                const cellTickets =
-                  byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? [];
-                return (
-                  <td
-                    key={epic._id}
-                    className="border-r border-b border-slate-200 p-3 align-top"
-                  >
-                    <div className="min-h-20 space-y-2.5">
-                      {cellTickets.length === 0 ? (
-                        <div className="flex h-16 items-center justify-center rounded-xl border-2 border-dashed border-slate-100 text-xs text-slate-300 transition hover:border-slate-200">
-                          無對應項目
-                        </div>
-                      ) : (
-                        cellTickets.map((ticket) => (
-                          <TicketCard
-                            key={ticket._id}
-                            ticket={ticket}
-                            today={today}
-                          />
-                        ))
-                      )}
-                    </div>
-                  </td>
-                );
-              })}
+              {epics.map((epic) => (
+                <DropCell
+                  key={epic._id}
+                  checkpointId={row.checkpoint._id}
+                  epicId={epic._id}
+                  tickets={byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? []}
+                  today={today}
+                />
+              ))}
             </tr>
           );
         })}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * One (checkpoint, epic) cell, and the drop target for a card moving between
+ * weeks.
+ *
+ * A card may only change rows: a cell belonging to another epic lights up red
+ * and rejects the drop, because a move is meant to re-date work, not reassign
+ * it to a different project.
+ */
+function DropCell({
+  checkpointId,
+  epicId,
+  tickets,
+  today,
+}: {
+  checkpointId: Id<"checkpoints">;
+  epicId: Id<"epics">;
+  tickets: readonly Ticket[];
+  today: string;
+}) {
+  const data: CellDropData = { checkpointId, epicId };
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: `cell:${checkpointId}:${epicId}`,
+    data,
+  });
+
+  const drag = ticketDragData(active);
+  const wrongEpic = drag !== null && drag.epicId !== epicId;
+  const rejecting = isOver && wrongEpic;
+  const accepting = isOver && !wrongEpic;
+
+  return (
+    <td
+      ref={setNodeRef}
+      title={rejecting ? "只能在同一個 Epic 的欄位內移動" : undefined}
+      className={cn(
+        "border-r border-b border-slate-200 p-3 align-top transition-colors",
+        accepting && "bg-indigo-50 ring-2 ring-indigo-400 ring-inset",
+        rejecting && "cursor-not-allowed bg-rose-50 ring-2 ring-rose-400 ring-inset",
+      )}
+    >
+      <div className="min-h-20 space-y-2.5">
+        {tickets.length === 0 ? (
+          <div
+            className={cn(
+              "flex h-16 items-center justify-center rounded-xl border-2 border-dashed border-slate-100 text-xs text-slate-300 transition hover:border-slate-200",
+              accepting && "border-indigo-300 text-indigo-500",
+              rejecting && "border-rose-300 text-rose-500",
+            )}
+          >
+            {rejecting ? "不能跨 Epic" : accepting ? "放這裡" : "無對應項目"}
+          </div>
+        ) : (
+          tickets.map((ticket) => (
+            <DraggableTicket key={ticket._id} ticket={ticket} today={today} />
+          ))
+        )}
+      </div>
+    </td>
   );
 }

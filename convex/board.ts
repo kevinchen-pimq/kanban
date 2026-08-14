@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { accentValidator, checkpointKindValidator, statusValidator } from "./schema";
 
@@ -126,5 +126,54 @@ export const get = query({
     }
 
     return { epics, checkpoints, tickets, hasOlder, truncated };
+  },
+});
+
+/**
+ * Move one card to a different checkpoint row, keeping it in its epic column.
+ *
+ * This is the board's only public write, and it is **unauthenticated**: there
+ * is no auth system in front of the board, so anyone who can load the site can
+ * re-date a card. That is the accepted trade for the drag-and-drop the team
+ * asked for on an internal, unlisted deployment — if the board is ever exposed
+ * more widely, this handler is the one place to put a check.
+ *
+ * `epicId` is the column the card must *stay* in, not one to move it to: a
+ * value that differs from the ticket's own epic is rejected. The board already
+ * refuses cross-epic drops in the UI; validating here makes the rule hold for
+ * any caller, and rules out an epic swap through a hand-written request.
+ *
+ * A move is not a new source of truth. Re-importing the epic's payload puts the
+ * ticket back in the week the payload says, since the payload still decides
+ * where a ticket belongs.
+ */
+export const moveTicket = mutation({
+  args: {
+    ticketId: v.id("tickets"),
+    /** The ticket's current epic, echoed back as a guard. */
+    epicId: v.id("epics"),
+    checkpointId: v.id("checkpoints"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ticket = await ctx.db.get(args.ticketId);
+    if (!ticket) throw new Error(`No ticket with id ${args.ticketId}`);
+
+    if (ticket.epicId !== args.epicId) {
+      throw new Error(
+        `Ticket ${ticket.key} belongs to a different epic than the drop target. ` +
+          `A move may change the checkpoint row only.`,
+      );
+    }
+
+    const checkpoint = await ctx.db.get(args.checkpointId);
+    if (!checkpoint) {
+      throw new Error(`No checkpoint with id ${args.checkpointId}`);
+    }
+
+    if (ticket.checkpointId !== args.checkpointId) {
+      await ctx.db.patch(ticket._id, { checkpointId: args.checkpointId });
+    }
+    return null;
   },
 });

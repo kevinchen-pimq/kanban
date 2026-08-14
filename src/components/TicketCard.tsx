@@ -1,16 +1,27 @@
 import { Clock, GitPullRequest, SquareCheckBig } from "lucide-react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
+import { AssigneeAvatar } from "@/components/AssigneeAvatar";
 import { StatusDot } from "@/components/StatusDot";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { initials, isOverdue, STATUS_STYLES, type Ticket } from "@/lib/board";
+import { isOverdue, STATUS_STYLES, type Ticket } from "@/lib/board";
 import { formatDueDate } from "@/lib/dates";
 import { prLabel } from "@/lib/github";
+import { jiraIssueUrl } from "@/lib/jira";
 import { cn } from "@/lib/utils";
+
+/**
+ * Cards are draggable, and the drag sensor listens on pointerdown of the whole
+ * card. Links inside it stop that event so following a link never doubles as
+ * the start of a drag.
+ */
+function keepPointerFromDrag(event: ReactPointerEvent) {
+  event.stopPropagation();
+}
 
 export function TicketCard({ ticket, today }: { ticket: Ticket; today: string }) {
   const status = STATUS_STYLES[ticket.status];
@@ -65,6 +76,7 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
               href={pr}
               target="_blank"
               rel="noreferrer"
+              onPointerDown={keepPointerFromDrag}
               className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
             >
               <GitPullRequest className="size-2.5" aria-hidden />
@@ -75,17 +87,20 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
       )}
 
       <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
-        <div className="flex items-center gap-1 font-mono font-medium text-slate-400">
+        <a
+          href={jiraIssueUrl(ticket.key)}
+          target="_blank"
+          rel="noreferrer"
+          onPointerDown={keepPointerFromDrag}
+          title={`在 Jira 開啟 ${ticket.key}`}
+          className="inline-flex items-center gap-1 rounded font-mono font-medium text-slate-500 transition hover:text-indigo-700 hover:underline"
+        >
           <SquareCheckBig className="size-2.5 text-indigo-500" aria-hidden />
           <span>{ticket.key}</span>
-        </div>
+        </a>
         {ticket.assignee && (
           <div className="flex items-center gap-1">
-            <Avatar className="size-4 ring-1 ring-white">
-              <AvatarFallback className="bg-[#7c2d12] text-[8px] font-semibold text-white">
-                {initials(ticket.assignee)}
-              </AvatarFallback>
-            </Avatar>
+            <AssigneeAvatar name={ticket.assignee} className="ring-1 ring-white" />
             <span className="text-[10px] font-bold text-slate-500">
               {ticket.assignee}
             </span>
