@@ -93,9 +93,24 @@ const checkpoints = (raw.checkpoints ?? []).map((checkpoint, i) => {
   return checkpoint;
 });
 
+/**
+ * Fields a ticket may carry. Everything sent on to Convex is picked by name
+ * below, so an unlisted field would otherwise vanish without a word — a
+ * `githubPr` typo would silently drop every PR link. Anything here that is not
+ * picked is deliberate file-level provenance: `resolvedAt` records the Jira
+ * resolution date a checkpoint was derived from, and stays out of the database.
+ */
+const TICKET_FIELDS = new Set([
+  "key", "title", "epicCode", "checkpoint", "status", "jiraStatus",
+  "dueDate", "githubPrs", "tag", "assignee",
+  "resolvedAt",
+]);
+
 const seen = new Set();
 const tickets = (raw.tickets ?? []).map((ticket, i) => {
   const where = `tickets[${i}]${ticket.key ? ` (${ticket.key})` : ""}`;
+  const unknown = Object.keys(ticket).filter((k) => !TICKET_FIELDS.has(k));
+  if (unknown.length) fail(where, `unknown field(s): ${unknown.join(", ")}`);
   if (!ticket.key) fail(where, "missing key");
   if (!ticket.title) fail(where, "missing title");
   if (!ticket.epicCode) fail(where, "missing epicCode");

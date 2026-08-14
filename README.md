@@ -103,7 +103,9 @@ parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<週二>", "<下�
 
 一張票可能出現在多個週視窗(被打回後再次切 Dev Done),此時取**最後**一次 —— 那是真正生效的那一次。
 
-從未進過 Dev Done 的票留在 backlog 列。注意這條規則的後果:spec、設計稿、測試案例、POC 這類**不經過 Dev Done 欄位**的工作,即使在 Jira 已經 Done,也會落在 backlog(ABC-0000 有 13 張是這種)。這是規則本身的性質,不是查詢漏掉了。
+**沒有 Dev Done 的票改看 resolution date。** spec、prototype、設計稿、測試案例、POC 這類工作根本不經過 Dev Done 欄位,只靠第一條規則會讓它們即使在 Jira 已經 Done 也全部堆進 backlog。所以第二步改用 Jira 的 resolution date 決定週次,並把來源日期記在該張票的 `resolvedAt` 欄位裡備查(這個欄位只存在檔案中,不會寫進資料庫)。
+
+兩條都沒有的票才留在 backlog —— 那是真正還沒做完的工作該待的地方。ABC-0000 的 12 張 backlog 票就是這種情況(Issue Open / Doing / Ready for Review,皆未 resolved)。
 
 **PR 連結的來源**:Jira 的 development panel 沒有透過 Atlassian MCP 開放(`getJiraIssueRemoteIssueLinks` 回傳 `[]`),`gh` CLI 沒安裝,直接打 api.github.com 也被 proxy 擋(403)。可行的是 GitHub MCP 的 PR 搜尋,它可以直接指定 repo,不需要 `add_repo`(後者拒絕跨 owner 掛載):
 
@@ -144,8 +146,9 @@ repo:<owner>/<repo> "ABC-0000"
 
 `board.get` 收一個 `fromDate`(ISO 日期),只回傳**結束日在該日之後**的週次列與這些列的卡片,並附上 `hasOlder` 告訴前端還有沒有更早的資料。卡片是逐 checkpoint 走索引取,不是整張表掃出來再過濾,所以成本跟著視窗大小而不是資料總量。
 
-前端首次只載入近 8 週,每次再往前拉 8 週,`hasOlder` 變 false 就停止請求並收起入口。三個實作細節:
+前端首次只載入近 8 週,每次再往前拉 8 週,`hasOlder` 變 false 就停止請求並收起入口。四個實作細節:
 
+- **開場捲到本週**:先載入的 8 週大多是歷史,停在最上面等於先給讀者最舊的一列。所以第一次拿到資料後會把本週那一列捲到欄位標題正下方(標題是 sticky,要扣掉它的高度否則會被蓋住)。只做一次,之後捲動位置就完全屬於讀者。若今天不落在任何一週(資料過期),就維持在最上面不動。
 - **入口是按鈕,不只是捲動手勢**:看板初次繪製時 `scrollTop` 已經是 0,此時往上滑不會觸發 `scroll` 事件,單靠捲動偵測會讓讀者完全載不到更早的週次。所以頂端那一列是可點的按鈕,捲動偵測只是額外的便利路徑。
 - **維持捲動位置**:往上補列會讓 `scrollHeight` 變大,若不處理,讀者會被推到頁面下方。所以在請求前記下「距底距離」,DOM 更新後用 `useLayoutEffect` 還原,原本在看的那幾列就留在原處。
 - **不閃白**:Convex 的 `useQuery` 在參數改變時會先回 `undefined`。直接用會讓整個看板在載入更早週次時消失一瞬間,所以保留上一次的結果繼續畫,只在頂端顯示載入中。

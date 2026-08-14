@@ -50,6 +50,26 @@ export default function App() {
     setFromDate((current) => weeksBefore(current, LOAD_STEP_WEEKS));
   }, []);
 
+  // Open on the current week instead of the top of the window. The first eight
+  // weeks loaded are mostly history, so landing at the top shows the oldest
+  // rows first — the reader would have to scroll every time to reach the week
+  // they actually came for. Runs once; afterwards the scroll position is theirs.
+  const didInitialScroll = useRef(false);
+  useLayoutEffect(() => {
+    if (didInitialScroll.current || live === undefined) return;
+    didInitialScroll.current = true;
+
+    const el = scrollerRef.current;
+    const row = el?.querySelector<HTMLElement>("[data-current-week]");
+    if (!el || !row) return; // no week covers today: leave the board at the top
+
+    // The column header is sticky, so stop short of it or it covers the row.
+    const head = el.querySelector("thead");
+    const headOffset = head instanceof HTMLElement ? head.offsetHeight : 0;
+    el.scrollTop +=
+      row.getBoundingClientRect().top - el.getBoundingClientRect().top - headOffset;
+  }, [live]);
+
   // Prepending rows grows the scroll height above the viewport, which would
   // otherwise throw the reader back down the page. Restore the same distance
   // from the bottom so the rows they were reading stay put.

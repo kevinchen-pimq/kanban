@@ -89,6 +89,8 @@ export function BoardMatrix({
           return (
             <tr
               key={row.checkpoint._id}
+              // Marks the row for today so the board can open scrolled to it.
+              data-current-week={isCurrent || undefined}
               className={isCurrent ? "bg-indigo-50/20" : "hover:bg-slate-50/50"}
             >
               <th
