@@ -36,10 +36,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { matchesSearch, type Ticket, type TicketStatus } from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
 import {
+  boardCollision,
   reorderedCell,
   resolveDropTarget,
   ticketDragData,
-  trayFirstCollision,
 } from "@/lib/dnd";
 import { scrollToCurrentWeek } from "@/lib/scroll";
 import { useStatusCycle } from "@/hooks/useStatusCycle";
@@ -62,6 +62,26 @@ const DRAG_START_PX = 6;
 /** A click this soon after a drop is the drop's own click, not a request. */
 const CLICK_AFTER_DRAG_MS = 250;
 
+/**
+ * Auto-scroll while dragging, kept on a short leash.
+ *
+ * dnd-kit's defaults treat the outer 20% of the scroll container as "scroll me",
+ * and the board's sticky header sits inside that band — so picking up a card
+ * anywhere near the top made the matrix creep upwards under a still pointer,
+ * sliding one cell after another beneath it. Measured: 474 → 352 of scrollTop
+ * without the pointer moving, which is what made the drop indicators appear to
+ * flicker between rows. A thin strip at the very edge still reaches an off-screen
+ * week, and the staging tray covers the long journeys.
+ *
+ * Horizontal auto-scroll is off entirely: a card may only ever land in its own
+ * epic column, so scrolling sideways during a drag can only take the reader away
+ * from every legal target.
+ */
+const AUTO_SCROLL = {
+  threshold: { x: 0, y: 0.08 },
+  acceleration: 6,
+} as const;
+
 export default function App() {
   const today = useMemo(() => todayIso(), []);
   const [fromDate, setFromDate] = useState(() =>
@@ -77,25 +97,54 @@ export default function App() {
   const board = live ?? lastBoard.current;
   const loadingOlder = live === undefined && lastBoard.current !== undefined;
 
-  // Patch the loaded windows the moment a card is dropped, so the card appears
-  // in its new row on the same frame instead of after the server round trip.
-  // Every window is patched (there is normally one) by reading the args back
-  // out of the store, which also keeps the update correct after a widen.
+  // Both drop mutations patch the loaded windows before they are sent, so the
+  // card is in its new place on the frame the pointer is released — dnd-kit drops
+  // its transforms at that moment, and anything still holding the server's old
+  // answer renders the card back where it started until the round trip lands.
+  // Every window is patched (there is normally one) by reading the args back out
+  // of the store, which also keeps the update correct after a widen.
   const moveTicket = useMutation(api.board.moveTicket).withOptimisticUpdate(
-    (store, { ticketId, checkpointId }) => {
+    (store, { ticketId, epicId, checkpointId }) => {
       for (const { args, value } of store.getAllQueries(api.board.get)) {
         if (!value) continue;
+
+        // The card lands last in the target cell, which is what the server does
+        // too. Without an order it would sort among the cards that have none and
+        // appear mid-cell for a frame.
+        const endOfCell = value.tickets.filter(
+          (ticket) =>
+            ticket.checkpointId === checkpointId &&
+            ticket.epicId === epicId &&
+            ticket._id !== ticketId,
+        ).length;
+
         store.setQuery(api.board.get, args, {
           ...value,
           tickets: value.tickets.map((ticket) =>
-            ticket._id === ticketId ? { ...ticket, checkpointId } : ticket,
+            ticket._id === ticketId
+              ? { ...ticket, checkpointId, order: endOfCell }
+              : ticket,
           ),
         });
       }
     },
   );
 
-  const reorderCell = useMutation(api.board.reorderCell);
+  const reorderCell = useMutation(api.board.reorderCell).withOptimisticUpdate(
+    (store, { ticketIds }) => {
+      const orderById = new Map(ticketIds.map((id, index) => [id, index]));
+      for (const { args, value } of store.getAllQueries(api.board.get)) {
+        if (!value) continue;
+        store.setQuery(api.board.get, args, {
+          ...value,
+          tickets: value.tickets.map((ticket) => {
+            const order = orderById.get(ticket._id);
+            return order === undefined ? ticket : { ...ticket, order };
+          }),
+        });
+      }
+    },
+  );
   const createTicket = useMutation(api.board.createTicket);
   const updateTicket = useMutation(api.board.updateTicket);
   const deleteTicket = useMutation(api.board.deleteTicket);
@@ -387,7 +436,8 @@ export default function App() {
        <BoardActionsProvider actions={actions}>
         <DndContext
           sensors={sensors}
-          collisionDetection={trayFirstCollision}
+          collisionDetection={boardCollision}
+          autoScroll={AUTO_SCROLL}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
           onDragCancel={() => setDragged(null)}

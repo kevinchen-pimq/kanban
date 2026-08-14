@@ -16,7 +16,11 @@ import {
   type Epic,
   type Ticket,
 } from "@/lib/board";
-import { ticketDragData, type CellDropData } from "@/lib/dnd";
+import {
+  resolveDropTarget,
+  ticketDragData,
+  type CellDropData,
+} from "@/lib/dnd";
 import { cn } from "@/lib/utils";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -196,12 +200,23 @@ function DropCell({
   const { openCreate } = useBoardActions();
   const data: CellDropData = { checkpointId, epicId };
   const cellId = `cell:${checkpointId}:${epicId}`;
-  const { setNodeRef, isOver, active } = useDroppable({ id: cellId, data });
+  const { setNodeRef, over, active } = useDroppable({ id: cellId, data });
 
+  // Both signals come from the one resolved target rather than from `isOver`:
+  // while a card is being sorted inside its own cell the target is the card, and
+  // this cell says nothing — the shuffling cards are already the feedback. Any
+  // other cell under the pointer speaks instead, in one voice: indigo when the
+  // card may land here, red when it belongs to another epic.
   const drag = ticketDragData(active);
-  const wrongEpic = drag !== null && drag.epicId !== epicId;
-  const rejecting = isOver && wrongEpic;
-  const accepting = isOver && !wrongEpic;
+  const target = resolveDropTarget(over);
+  const targeted =
+    target?.kind === "cell" &&
+    !target.onCard &&
+    target.checkpointId === checkpointId &&
+    target.epicId === epicId;
+
+  const rejecting = targeted && drag !== null && drag.epicId !== epicId;
+  const accepting = targeted && !rejecting;
 
   return (
     <td

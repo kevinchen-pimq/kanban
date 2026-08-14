@@ -1,7 +1,9 @@
 import {
+  closestCenter,
   pointerWithin,
   type Active,
   type CollisionDetection,
+  type DroppableContainer,
   type Over,
 } from "@dnd-kit/core";
 import { arrayMove, hasSortableData } from "@dnd-kit/sortable";
@@ -39,16 +41,27 @@ export function ticketDragData(active: Active | null): TicketDragData | null {
 }
 
 /**
- * Where a drop landed.
+ * Where a drop would land, resolved once.
  *
- * A card can be let go over a cell or over another card, and both answers mean
- * "this cell": cards carry their own `checkpointId`, so the two data shapes read
- * the same way. Cards are the ones that matter for ordering — dropping on a card
- * is how a position within a cell gets chosen.
+ * A card can be let go over a cell or over another card, and both answers name
+ * the same cell — cards carry their own `checkpointId`, so the two data shapes
+ * read the same way. What differs is the *kind* of feedback that belongs to each:
+ * `onCard` is true when the pointer resolved to a card, which only happens inside
+ * the cell the drag started in, and which means the sort preview is doing the
+ * talking and the cell must stay quiet.
+ *
+ * Every indicator on the board comes from this one value. When two components
+ * each read `over` their own way, they disagree, and the reader sees them argue.
  */
 export type DropTarget =
   | { kind: "tray" }
-  | { kind: "cell"; epicId: Id<"epics">; checkpointId: Id<"checkpoints"> }
+  | {
+      kind: "cell";
+      epicId: Id<"epics">;
+      checkpointId: Id<"checkpoints">;
+      /** Resolved via a card in the cell, i.e. this is a reorder in progress. */
+      onCard: boolean;
+    }
   | null;
 
 export function resolveDropTarget(over: Over | null): DropTarget {
@@ -63,6 +76,7 @@ export function resolveDropTarget(over: Over | null): DropTarget {
     kind: "cell",
     epicId: data.epicId,
     checkpointId: data.checkpointId,
+    onCard: data.ticketId !== undefined,
   };
 }
 
@@ -91,15 +105,80 @@ export function reorderedCell(
   return arrayMove(items, from, to) as Id<"tickets">[];
 }
 
+/** Cards register as droppables too; only they carry a `ticketId`. */
+function isCard(container: DroppableContainer): boolean {
+  return (container.data.current as TicketDragData | undefined)?.ticketId !== undefined;
+}
+
+function inCell(
+  container: DroppableContainer,
+  epicId: Id<"epics">,
+  checkpointId: Id<"checkpoints">,
+): boolean {
+  const data = container.data.current as Partial<CellDropData> | undefined;
+  return data?.epicId === epicId && data?.checkpointId === checkpointId;
+}
+
 /**
- * Pointer-based hit testing, with the tray always winning.
+ * Hit testing for the board: one target per pointer position, decided in a fixed
+ * order rather than by whichever droppable happens to rank first.
  *
- * The tray floats over the matrix, so a pointer inside it is inside a cell too.
- * `pointerWithin` alone would then rank the two by distance to their centres and
- * could hand the drop to the cell hidden underneath.
+ * Cards and cells overlap — a card sits inside the cell that also accepts drops —
+ * so plain `pointerWithin` returned both and dnd-kit took whichever came first in
+ * its distance-to-centre ranking. That ranking flips on a pixel of pointer
+ * movement, and it flips again when the sort preview slides the cards under the
+ * pointer, so `over` alternated between a card and the cell. The sort preview
+ * follows a card target and the cell highlight follows a cell target, which is
+ * how the two ended up blinking at each other. Two other symptoms came from the
+ * same root: in the gap *between* two cards no card matched at all, and over
+ * another epic's cell a card in that cell often won, so the red refusal never
+ * appeared.
+ *
+ * The order is:
+ *
+ *  1. **The tray**, whenever the pointer is inside it. It floats over the matrix,
+ *     so it would otherwise compete with the cell underneath.
+ *  2. **A card of the source cell**, whenever the pointer is anywhere in that
+ *     cell — chosen by `closestCenter` over that cell's cards, so a pointer in
+ *     the gap between two cards still resolves to a card and the preview holds.
+ *     dnd-kit measures droppable rects at drag start, so this ranking does not
+ *     move as the preview shifts cards: same position, same answer.
+ *  3. **A cell**, everywhere else. Cards outside the source cell are excluded
+ *     from the running entirely: dnd-kit can only preview a shuffle inside the
+ *     list being dragged in, so a card target there would promise a reorder the
+ *     drop cannot honour.
  */
-export const trayFirstCollision: CollisionDetection = (args) => {
-  const collisions = pointerWithin(args);
-  const tray = collisions.find((collision) => collision.id === TRAY_DROP_ID);
-  return tray ? [tray] : collisions;
+export const boardCollision: CollisionDetection = (args) => {
+  const { active, droppableContainers } = args;
+
+  const tray = droppableContainers.filter((c) => c.id === TRAY_DROP_ID);
+  if (tray.length > 0) {
+    const overTray = pointerWithin({ ...args, droppableContainers: tray });
+    if (overTray.length > 0) return overTray;
+  }
+
+  const drag = ticketDragData(active);
+  if (drag?.checkpointId) {
+    const { epicId, checkpointId } = drag;
+    const sourceCell = droppableContainers.filter(
+      (c) => !isCard(c) && inCell(c, epicId, checkpointId),
+    );
+    const insideSourceCell = pointerWithin({
+      ...args,
+      droppableContainers: sourceCell,
+    });
+    if (insideSourceCell.length > 0) {
+      const cards = droppableContainers.filter(
+        (c) => isCard(c) && inCell(c, epicId, checkpointId),
+      );
+      return cards.length > 0
+        ? closestCenter({ ...args, droppableContainers: cards })
+        : insideSourceCell;
+    }
+  }
+
+  const cells = droppableContainers.filter(
+    (c) => !isCard(c) && c.id !== TRAY_DROP_ID,
+  );
+  return pointerWithin({ ...args, droppableContainers: cells });
 };
