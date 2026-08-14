@@ -72,8 +72,10 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   搜尋有幾個不報錯、只給錯答案的坑，都記在 skill 裡。
 - **匯入相關腳本住在 `.claude/skills/jira-board-import/scripts/`**，不在專案根目錄；
   日常操作走 `npm run import` / `npm run week`。
-- **真實 payload 不進版控**（`data/*.json` 被 gitignore，`data/example-epic.json`
-  是唯一的合成範例）。不要把真實工單標題、姓名、內部 repo 連結寫進 repo。
+- **真實 payload 不進版控，家在 Google Drive 的 `Kanban` 資料夾**（`data/*.json`
+  被 gitignore，`data/example-epic.json` 是唯一的合成範例）。匯入前用 Google
+  Drive MCP 從那裡下載，匯入成功後把更新版傳回去。不要把真實工單標題、姓名、
+  內部 repo 連結寫進 repo。
 - **週次換算一律跑 `npm run week`，不要心算。** `weekNumber` 是團隊編號
   （週二到週一），不是 ISO 週號。
 - **未知的 Jira 狀態要加進對應表**（skill 的 `scripts/jira-status.mjs`），

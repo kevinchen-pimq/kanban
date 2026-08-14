@@ -106,7 +106,10 @@ absent, `pruneEpics` makes the payload the whole truth for an epic, unmapped
 
 Fill in `_source`, `_jql`, `_fetchedAt`, `_notes` — `_notes` is where the
 judgement calls live (double-window tickets, tier-2 fallbacks, what the PR
-search means). Real payloads are gitignored; keep them outside the repo.
+search means). Real payloads are gitignored — their home is the **Google
+Drive `Kanban` folder** (find it via the Google Drive MCP). Download the
+existing payload from there before updating an epic, and upload the new
+version back after a successful import so the folder stays current.
 
 ## Step 5 — Validate, import, verify
 
