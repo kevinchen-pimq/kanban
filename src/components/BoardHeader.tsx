@@ -13,6 +13,8 @@ import { STATUS_ORDER, STATUS_STYLES, type TicketStatus } from "@/lib/board";
 export type StatusFilter = ReadonlySet<TicketStatus>;
 /** `null` stands for tickets with no assignee. */
 export type AssigneeFilter = ReadonlySet<string | null>;
+/** Epic `code`s, not ids: the selection is remembered across imports. */
+export type EpicFilter = ReadonlySet<string>;
 
 /** Two 52px tiers plus a hairline, matching the requested 105px header. */
 const TIER = "flex h-[52px] shrink-0 items-center gap-3 px-6";
@@ -28,6 +30,9 @@ const STATUS_OPTIONS: FilterOption<TicketStatus>[] = STATUS_ORDER.map(
 export function BoardHeader({
   search,
   onSearchChange,
+  epicFilter,
+  onEpicFilterChange,
+  epicOptions,
   statusFilter,
   onStatusFilterChange,
   assigneeFilter,
@@ -39,6 +44,9 @@ export function BoardHeader({
 }: {
   search: string;
   onSearchChange: (value: string) => void;
+  epicFilter: EpicFilter;
+  onEpicFilterChange: (value: EpicFilter) => void;
+  epicOptions: readonly FilterOption<string>[];
   statusFilter: StatusFilter;
   onStatusFilterChange: (value: StatusFilter) => void;
   assigneeFilter: AssigneeFilter;
@@ -78,6 +86,17 @@ export function BoardHeader({
               className="h-8 w-52 border-slate-300 bg-slate-50 pr-3 pl-8 text-xs md:text-xs"
             />
           </div>
+
+          {/* Epics are the board's columns, so this filter is also how the
+              matrix is narrowed to the projects someone actually works on. */}
+          <MultiSelectFilter
+            label="Epic 篩選"
+            allLabel="所有 Epic (All Epics)"
+            clearLabel="顯示所有 Epic"
+            options={epicOptions}
+            selected={epicFilter}
+            onChange={onEpicFilterChange}
+          />
 
           <MultiSelectFilter
             label="狀態篩選"

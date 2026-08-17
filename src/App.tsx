@@ -9,7 +9,14 @@ import {
 } from "@dnd-kit/core";
 import { useMutation, useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { AssigneeAvatar } from "@/components/AssigneeAvatar";
 import {
@@ -20,6 +27,7 @@ import { BoardConfigProvider } from "@/components/BoardConfigProvider";
 import {
   BoardHeader,
   type AssigneeFilter,
+  type EpicFilter,
   type StatusFilter,
 } from "@/components/BoardHeader";
 import { BoardMatrix } from "@/components/BoardMatrix";
@@ -35,6 +43,7 @@ import { UpdateNotice } from "@/components/UpdateNotice";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { matchesSearch, type Ticket, type TicketStatus } from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
+import { loadFilters, saveFilters } from "@/lib/filters";
 import {
   boardCollision,
   reorderedCell,
@@ -48,6 +57,7 @@ import type { Id } from "../convex/_generated/dataModel";
 
 const NO_STATUS_FILTER: ReadonlySet<TicketStatus> = new Set();
 const NO_ASSIGNEE_FILTER: ReadonlySet<string | null> = new Set();
+const NO_EPIC_FILTER: ReadonlySet<string> = new Set();
 
 /** Weeks shown on first paint, and how many more each scroll-up adds. */
 const INITIAL_WEEKS = 8;
@@ -188,11 +198,27 @@ export default function App() {
     if (el.scrollTop < LOAD_TRIGGER_PX) loadOlder();
   }, [board?.hasOlder, loadOlder]);
 
+  // The search box starts empty every time on purpose; the three filters below
+  // are restored from the last visit. See `src/lib/filters.ts`.
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState<StatusFilter>(NO_STATUS_FILTER);
-  const [assigneeFilter, setAssigneeFilter] =
-    useState<AssigneeFilter>(NO_ASSIGNEE_FILTER);
+  const stored = useRef(loadFilters()).current;
+  const [epicFilter, setEpicFilter] = useState<EpicFilter>(
+    () => new Set(stored.epics),
+  );
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    () => new Set(stored.statuses),
+  );
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>(
+    () => new Set(stored.assignees),
+  );
+
+  useEffect(() => {
+    saveFilters({
+      epics: [...epicFilter],
+      statuses: [...statusFilter],
+      assignees: [...assigneeFilter],
+    });
+  }, [epicFilter, statusFilter, assigneeFilter]);
 
   // Offer exactly the assignees present in the loaded window, so the menu can
   // never list someone with nothing to show. `null` covers unassigned tickets.
@@ -223,16 +249,68 @@ export default function App() {
     return options;
   }, [board]);
 
+  // Epics are the columns, so this menu doubles as "which projects am I looking
+  // at". Labelled with the code as well as the name, since the code is what the
+  // payload and the Jira keys speak.
+  const epicOptions = useMemo<FilterOption<string>[]>(
+    () =>
+      (board?.epics ?? []).map((epic) => ({
+        value: epic.code,
+        label: `${epic.code} · ${epic.name}`,
+      })),
+    [board],
+  );
+
+  // A remembered selection can name an epic or a person the board no longer has
+  // — an epic removed from the board, someone who left. Those are dropped once
+  // the board has actually loaded (never while it is still undefined, or the
+  // restore would be undone before it took effect). Dropping them keeps the
+  // stored value honest too: the next write no longer mentions them.
+  useEffect(() => {
+    if (!board) return;
+
+    const codes = new Set(board.epics.map((epic) => epic.code));
+    setEpicFilter((current) =>
+      [...current].every((code) => codes.has(code))
+        ? current
+        : new Set([...current].filter((code) => codes.has(code))),
+    );
+
+    const names = new Set<string | null>(
+      board.tickets.map((ticket) => ticket.assignee ?? null),
+    );
+    setAssigneeFilter((current) =>
+      [...current].every((name) => names.has(name))
+        ? current
+        : new Set([...current].filter((name) => names.has(name))),
+    );
+  }, [board]);
+
+  /** The columns to render: every epic, or just the ticked ones. */
+  const visibleEpics = useMemo(
+    () =>
+      (board?.epics ?? []).filter(
+        (epic) => epicFilter.size === 0 || epicFilter.has(epic.code),
+      ),
+    [board, epicFilter],
+  );
+
+  const visibleEpicIds = useMemo(
+    () => new Set(visibleEpics.map((epic) => epic._id)),
+    [visibleEpics],
+  );
+
   const visibleTickets = useMemo(() => {
     if (!board) return [];
     return board.tickets.filter(
       (ticket) =>
+        visibleEpicIds.has(ticket.epicId) &&
         matchesSearch(ticket, search) &&
         (statusFilter.size === 0 || statusFilter.has(ticket.status)) &&
         (assigneeFilter.size === 0 ||
           assigneeFilter.has(ticket.assignee ?? null)),
     );
-  }, [board, search, statusFilter, assigneeFilter]);
+  }, [board, visibleEpicIds, search, statusFilter, assigneeFilter]);
 
   // Clicking a status dot shows the new colour at once and writes once the
   // clicking stops; the override is applied here so the card, the tray chip and
@@ -446,13 +524,17 @@ export default function App() {
             <BoardHeader
               search={search}
               onSearchChange={setSearch}
-              statusFilter={statusFilter}
+              epicFilter={epicFilter}
+            onEpicFilterChange={setEpicFilter}
+            epicOptions={epicOptions}
+            statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               assigneeFilter={assigneeFilter}
               onAssigneeFilterChange={setAssigneeFilter}
               assigneeOptions={assigneeOptions}
               onReset={() => {
                 setSearch("");
+                setEpicFilter(NO_EPIC_FILTER);
                 setStatusFilter(NO_STATUS_FILTER);
                 setAssigneeFilter(NO_ASSIGNEE_FILTER);
               }}
@@ -498,7 +580,10 @@ export default function App() {
                         </button>
                       ))}
                     <BoardMatrix
-                      epics={board.epics}
+                      // Filtered epics, not all of them: an epic is a column, so
+                      // unticking one takes its whole column out and the grid
+                      // re-flows to the width of what is left.
+                      epics={visibleEpics}
                       checkpoints={board.checkpoints}
                       tickets={gridTickets}
                       today={today}
