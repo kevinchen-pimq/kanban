@@ -79,7 +79,7 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   Drive MCP 從那裡下載，匯入成功後把更新版傳回去。不要把真實工單標題、姓名、
   內部 repo 連結寫進 repo。
 - **週次換算一律跑 `npm run week`，不要心算。** `weekNumber` 是團隊編號
-  （週二到週一），不是 ISO 週號。
+  （週日到週六），不是 ISO 週號。
 - **未知的 Jira 狀態要加進對應表**（skill 的 `scripts/jira-status.mjs`），
   不要在 payload 裡硬塞 `status` 繞過去；匯入失敗是刻意設計。
 - **checkpoint 列順序由日期推導**，`convex/board.ts` 會忽略 payload 的

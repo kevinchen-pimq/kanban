@@ -2,14 +2,16 @@
 /**
  * Checkpoint week arithmetic.
  *
- * The team's checkpoint weeks run Tuesday to Monday and are numbered by the
- * team, not by ISO — W31 falls in ISO week 32. Because the numbering is a
- * convention rather than a formula the calendar knows, every date/week
- * conversion has to go through the anchor below.
+ * The team's checkpoint weeks run Sunday to Saturday and are numbered by the
+ * team, not by ISO. Because the numbering is a convention rather than a
+ * formula the calendar knows, every date/week conversion has to go through
+ * the anchor below.
  *
- * Do this arithmetic here rather than in your head. Counting Tuesdays by hand
- * across a month boundary is exactly the kind of step that looks obvious and
- * lands a ticket in the wrong row — a real off-by-one week happened that way.
+ * Do this arithmetic here rather than in your head. Counting week starts by
+ * hand across a month boundary is exactly the kind of step that looks obvious
+ * and lands a ticket in the wrong row — a real off-by-one week happened that
+ * way, and the boundary itself has been corrected once already (the weeks were
+ * first assumed to run Tuesday–Monday; the team's real weeks are Sun–Sat).
  *
  * Usage:
  *   npm run week -- 2026-07-24 [...more dates]
@@ -17,15 +19,16 @@
  *   npm run week -- --checkpoints 11 29
  *       -> checkpoint entries for a payload, W11..W29 inclusive
  *   npm run week -- --windows 2026-04-07 2026-08-15
- *       -> the (Tue, next Tue) pairs to sweep with a "CHANGED TO" JQL query
+ *       -> the (Sun, next Sun) pairs to sweep with a "CHANGED TO" JQL query
  */
 
 /**
- * W29 is known to start 2026-07-21, and weeks are contiguous, so W1 starts
- * 28 weeks earlier. Anchoring on a checkpoint someone can verify in Jira beats
- * a bare magic date: if the team ever renumbers, this is the one line to fix.
+ * W32 is known to run 2026-08-09 (Sun) .. 2026-08-15 (Sat) — confirmed by the
+ * team — and weeks are contiguous, so W1 starts 31 weeks earlier. Anchoring on
+ * a checkpoint someone can verify beats a bare magic date: if the team ever
+ * renumbers or moves the boundary again, this is the one line to fix.
  */
-const ANCHOR = { week: 29, startDate: "2026-07-21" };
+const ANCHOR = { week: 32, startDate: "2026-08-09" };
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 
@@ -40,17 +43,17 @@ const toIso = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 const W1_START = toUtc(ANCHOR.startDate) - (ANCHOR.week - 1) * WEEK;
 
-/** The checkpoint week an ISO date falls in. Weeks run Tue..Mon inclusive. */
+/** The checkpoint week an ISO date falls in. Weeks run Sun..Sat inclusive. */
 export function weekOf(iso) {
   return Math.floor((toUtc(iso) - W1_START) / WEEK) + 1;
 }
 
-/** Tuesday that opens the week. */
+/** Sunday that opens the week. */
 export function weekStart(week) {
   return toIso(W1_START + (week - 1) * WEEK);
 }
 
-/** Monday that closes the week. */
+/** Saturday that closes the week. */
 export function weekEnd(week) {
   return toIso(W1_START + (week - 1) * WEEK + 6 * DAY);
 }

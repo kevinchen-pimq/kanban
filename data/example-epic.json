@@ -27,13 +27,43 @@
     }
   ],
   "checkpoints": [
-    { "kind": "week", "weekNumber": 30, "startDate": "2026-07-28", "endDate": "2026-08-03", "order": 30 },
-    { "kind": "week", "weekNumber": 31, "startDate": "2026-08-04", "endDate": "2026-08-10", "order": 31 },
-    { "kind": "week", "weekNumber": 32, "startDate": "2026-08-11", "endDate": "2026-08-17", "order": 32 },
-    { "kind": "week", "weekNumber": 33, "startDate": "2026-08-18", "endDate": "2026-08-24", "order": 33 },
-    { "kind": "backlog", "label": "未定排程 / Backlog Pool", "order": 99 }
+    {
+      "kind": "week",
+      "weekNumber": 30,
+      "startDate": "2026-07-26",
+      "endDate": "2026-08-01",
+      "order": 30
+    },
+    {
+      "kind": "week",
+      "weekNumber": 31,
+      "startDate": "2026-08-02",
+      "endDate": "2026-08-08",
+      "order": 31
+    },
+    {
+      "kind": "week",
+      "weekNumber": 32,
+      "startDate": "2026-08-09",
+      "endDate": "2026-08-15",
+      "order": 32
+    },
+    {
+      "kind": "week",
+      "weekNumber": 33,
+      "startDate": "2026-08-16",
+      "endDate": "2026-08-22",
+      "order": 33
+    },
+    {
+      "kind": "backlog",
+      "label": "未定排程 / Backlog Pool",
+      "order": 99
+    }
   ],
-  "pruneEpics": ["DEMO-BOARD"],
+  "pruneEpics": [
+    "DEMO-BOARD"
+  ],
   "tickets": [
     {
       "key": "DEMO-101",
@@ -42,7 +72,9 @@
       "checkpoint": 30,
       "jiraStatus": "Done",
       "assignee": "alice",
-      "githubPrs": ["https://github.com/acme/platform/pull/101"]
+      "githubPrs": [
+        "https://github.com/acme/platform/pull/101"
+      ]
     },
     {
       "key": "DEMO-102",
@@ -64,7 +96,9 @@
       "jiraStatus": "Dev Test Done",
       "assignee": "bob",
       "dueDate": "2026-08-10",
-      "githubPrs": ["https://github.com/acme/platform/pull/112"],
+      "githubPrs": [
+        "https://github.com/acme/platform/pull/112"
+      ],
       "tag": "FE"
     },
     {
@@ -83,7 +117,9 @@
       "checkpoint": 33,
       "jiraStatus": "Ready for Review",
       "assignee": "bob",
-      "githubPrs": ["https://github.com/acme/platform/pull/120"]
+      "githubPrs": [
+        "https://github.com/acme/platform/pull/120"
+      ]
     },
     {
       "key": "DEMO-106",

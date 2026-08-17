@@ -70,7 +70,7 @@ npx convex run data:setConfig '{"assigneeColors":{"Some Person":"#7c2d12"}}'
 
 ## 週次換算
 
-週次是團隊自己的 checkpoint 編號（週二到週一，**不是 ISO 週號**），一律走腳本、不要心算：
+週次是團隊自己的 checkpoint 編號（**週日到週六**，不是 ISO 週號），一律走腳本、不要心算：
 
 ```bash
 npm run week -- 2026-07-24                    # 這天屬於哪一週

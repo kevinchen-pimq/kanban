@@ -22,7 +22,7 @@ Jira 狀態名稱 → 燈號的完整對應表在 `.claude/skills/jira-board-imp
 
 **「本週」是算出來的，不是存的。** checkpoint 只存起訖日期，`src/lib/board.ts` 的 `describeCheckpoints()` 用今天的日期判斷每一列的相對位置（`current` / `previous` / `next` / `past` / `future` / `backlog`），看板據此把本週那一列標成靛藍色左邊框並淡染背景。所以每週不需要手動改資料。相鄰關係是用日期距離推出來的，即使中間缺了某一週，判斷仍然正確。
 
-注意 `weekNumber` 是團隊自己的 checkpoint 編號，**不是 ISO 週號**（W31 對應的 ISO 週其實是 32），而且一週的區間是週二到週一——所以編號用存的，不用算的。
+注意 `weekNumber` 是團隊自己的 checkpoint 編號，**不是 ISO 週號**，而且一週的區間是週日到週六（例如 W32 = 2026-08-09 ~ 2026-08-15）——所以編號用存的，不用算的，換算一律走 `npm run week`。
 
 **逾期也是算出來的。** 卡片沒有 `isOverdue` 欄位；`isOverdue()` 判斷 `dueDate` 早於今天且狀態不是 `done`，所以紅色標籤不會過期失準。
 
