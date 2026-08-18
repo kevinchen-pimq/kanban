@@ -2,15 +2,31 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { credentialsValidator, requireRead, requireWrite } from "./auth";
-import { accentValidator, checkpointKindValidator, statusValidator } from "./schema";
 import {
-  assertIsoDate,
-  cleanKey,
-  cleanOptionalText,
-  cleanPrUrls,
-  cleanTitle,
-} from "./validation";
+  applyCreate,
+  applyDelete,
+  applyMove,
+  applyReorder,
+  applyUpdate,
+  type TicketFields,
+} from "./apply";
+import { credentialsValidator, requireEdit, requireRead } from "./auth";
+import {
+  overlayTickets,
+  pendingEditValidator,
+  pendingRequestsFor,
+  requestCreate,
+  requestDelete,
+  requestMove,
+  requestReorder,
+  requestUpdate,
+} from "./editRequests";
+import {
+  accentValidator,
+  checkpointKindValidator,
+  statusValidator,
+  ticketRefValidator,
+} from "./schema";
 
 /**
  * Upper bound on cards fetched for one board render. A matrix that a person
@@ -44,7 +60,13 @@ const checkpointDoc = v.object({
 });
 
 const ticketDoc = v.object({
-  _id: v.id("tickets"),
+  /**
+   * A real card's id — or, for a card that so far only exists as the caller's own
+   * pending "create" proposal, that request's id. The `board:*` mutations accept
+   * either (see `requireRealTicket`), so the client needs no second code path for
+   * a card it can see but nobody has approved.
+   */
+  _id: ticketRefValidator,
   _creationTime: v.number(),
   key: v.string(),
   title: v.string(),
@@ -56,6 +78,12 @@ const ticketDoc = v.object({
   tag: v.optional(v.string()),
   assignee: v.optional(v.string()),
   order: v.optional(v.number()),
+  /**
+   * Set only for the account that proposed the change: this card is showing an
+   * edit request of theirs rather than what the board really says. See
+   * `convex/editRequests.ts`.
+   */
+  pendingEdit: v.optional(pendingEditValidator),
 });
 
 const configDoc = v.object({
@@ -93,6 +121,11 @@ function isInWindow(checkpoint: Doc<"checkpoints">, fromDate: string | undefined
  * would add a second loading state, and cards would paint once without their
  * Jira links and again with them.
  *
+ * For an account that proposes edits rather than making them, the caller's own
+ * pending edit requests are overlaid on the result — their proposed board, on the
+ * server, so it survives a reload and stays private to them. Everybody else sees
+ * the real rows.
+ *
  * Requires `permRead`. Nothing about the board — not the epic names, not the
  * ticket titles — is readable without a credential the `users` table knows.
  */
@@ -114,7 +147,7 @@ export const get = query({
     truncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    await requireRead(ctx, args.auth);
+    const user = await requireRead(ctx, args.auth);
 
     const [epics, allCheckpoints, config] = await Promise.all([
       ctx.db.query("epics").withIndex("by_order").order("asc").collect(),
@@ -157,10 +190,16 @@ export const get = query({
       }
     }
 
+    const requests = await pendingRequestsFor(ctx, user);
+
     return {
       epics,
       checkpoints,
-      tickets,
+      tickets: overlayTickets(
+        tickets,
+        requests,
+        new Set(checkpoints.map((checkpoint) => checkpoint._id)),
+      ),
       config: config ?? null,
       hasOlder,
       truncated,
@@ -171,81 +210,52 @@ export const get = query({
 /**
  * The board's public writes.
  *
- * Everything below this line takes an `auth` credential pair and requires
- * `permWrite` (`convex/auth.ts`) before it touches anything — the UI hides the
+ * Everything below this line takes an `auth` credential pair and calls
+ * `requireEdit` (`convex/auth.ts`) before it touches anything — the UI hides the
  * editing affordances from a read-only account, but this is the check that
  * actually holds, for the board and for any hand-written request.
  *
+ * Each one then forks on what the account may do, and *only* on that:
+ *
+ * - `permWrite` — the change is applied now, through `apply.ts`. Unchanged
+ *   behaviour, unchanged code path.
+ * - otherwise `permEditRequest` — the same call becomes a pending edit request
+ *   (`editRequests.ts`), validated by the same functions, waiting for somebody
+ *   with `permWrite` to approve it.
+ *
+ * The fork is here rather than in the client on purpose: the board sends the same
+ * mutation with the same arguments and the same optimistic update either way, so
+ * there is no second UI to keep in step, and no way for a client to pick which
+ * path it gets.
+ *
  * Authenticated is not the same as trusted, so each handler still validates as
- * strictly as the importer does; the shared field checks live in
- * `validation.ts`. Import and config functions stay internal (`data.ts`).
+ * strictly as the importer does; the shared field checks live in `validation.ts`
+ * and the shared writes in `apply.ts`. Import and config functions stay internal
+ * (`data.ts`).
  *
  * None of these writes is a new source of truth. A payload re-import decides
  * again where a ticket sits and what it says, and with `pruneEpics` it deletes
  * cards the payload does not mention — including ones created here.
  */
 
-/** Resolve a ticket and check the caller's epic guard against it. */
-async function ticketInEpic(
+/**
+ * A card id from the client, narrowed to a real ticket.
+ *
+ * The direct path can only write to rows that exist. An id belonging to a pending
+ * `create` request reaches here only if an account gained `permWrite` while
+ * holding its own proposals, so it gets an answer that says what to do about it.
+ */
+function requireRealTicket(
   ctx: MutationCtx,
-  ticketId: Id<"tickets">,
-  epicId: Id<"epics">,
-) {
-  const ticket = await ctx.db.get(ticketId);
-  if (!ticket) throw new Error(`No ticket with id ${ticketId}`);
-  if (ticket.epicId !== epicId) {
+  ref: Id<"tickets"> | Id<"editRequests">,
+): Id<"tickets"> {
+  const ticketId = ctx.db.normalizeId("tickets", ref);
+  if (!ticketId) {
     throw new Error(
-      `Ticket ${ticket.key} belongs to a different epic than the one given. ` +
-        `A card cannot change epic column.`,
+      "這張卡片還只是一筆待審的新增提議，先在鈴鐺裡核准它，才能直接編輯。",
     );
   }
-  return ticket;
-}
-
-/**
- * Number a cell 0..n-1 and return the next free position.
- *
- * `order` is optional, so a cell can hold a mix: cards someone has arranged by
- * hand, and imported cards that have never been touched. The board reads that
- * mix as "ordered cards first, then the rest by age" — which means simply taking
- * `max(order) + 1` for an arriving card would file it *above* the untouched ones
- * rather than at the end.
- *
- * So placing a card into a cell also fills in the orders the cell was missing,
- * in exactly the order the board was already showing them. The arrangement on
- * screen does not move, the mix is gone, and the arriving card genuinely lands
- * last. A cell only gets numbered when someone puts a card in it; cells nobody
- * has touched keep their orders empty and sort by age, as they always did.
- */
-async function appendToCell(
-  ctx: MutationCtx,
-  checkpointId: Id<"checkpoints">,
-  epicId: Id<"epics">,
-): Promise<number> {
-  const cell = await ctx.db
-    .query("tickets")
-    .withIndex("by_checkpoint_and_epic", (q) =>
-      q.eq("checkpointId", checkpointId).eq("epicId", epicId),
-    )
-    .collect();
-
-  // Same comparison as `sortCellTickets` in the UI, so numbering a cell never
-  // rearranges what the reader is looking at.
-  cell.sort((a, b) => {
-    if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
-    if (a.order !== undefined) return -1;
-    if (b.order !== undefined) return 1;
-    return a._creationTime - b._creationTime;
-  });
-
-  await Promise.all(
-    cell.map((ticket, index) =>
-      ticket.order === index
-        ? undefined
-        : ctx.db.patch(ticket._id, { order: index }),
-    ),
-  );
-  return cell.length;
+  return ticketId;
 }
 
 /**
@@ -265,28 +275,29 @@ async function appendToCell(
 export const moveTicket = mutation({
   args: {
     auth: credentialsValidator,
-    ticketId: v.id("tickets"),
+    ticketId: ticketRefValidator,
     /** The ticket's current epic, echoed back as a guard. */
     epicId: v.id("epics"),
     checkpointId: v.id("checkpoints"),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWrite(ctx, args.auth);
+    const user = await requireEdit(ctx, args.auth);
 
-    const ticket = await ticketInEpic(ctx, args.ticketId, args.epicId);
-
-    const checkpoint = await ctx.db.get(args.checkpointId);
-    if (!checkpoint) {
-      throw new Error(`No checkpoint with id ${args.checkpointId}`);
-    }
-
-    if (ticket.checkpointId !== args.checkpointId) {
-      await ctx.db.patch(ticket._id, {
+    if (user.permWrite) {
+      await applyMove(ctx, {
+        ticketId: requireRealTicket(ctx, args.ticketId),
+        epicId: args.epicId,
         checkpointId: args.checkpointId,
-        order: await appendToCell(ctx, args.checkpointId, args.epicId),
       });
+      return null;
     }
+
+    await requestMove(ctx, user, {
+      ref: args.ticketId,
+      epicId: args.epicId,
+      checkpointId: args.checkpointId,
+    });
     return null;
   },
 });
@@ -304,7 +315,9 @@ export const moveTicket = mutation({
  * let go.
  *
  * Every ticket must already be in this cell and in this epic; a list that names
- * a card from somewhere else is rejected whole rather than half-applied.
+ * a card from somewhere else is rejected whole rather than half-applied. For a
+ * proposing account "already in this cell" means *on their board*, so a card they
+ * have asked to move here counts.
  */
 export const reorderCell = mutation({
   args: {
@@ -312,84 +325,29 @@ export const reorderCell = mutation({
     epicId: v.id("epics"),
     checkpointId: v.id("checkpoints"),
     /** Every ticket in the cell, in the order it should be shown. */
-    ticketIds: v.array(v.id("tickets")),
+    ticketIds: v.array(ticketRefValidator),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWrite(ctx, args.auth);
+    const user = await requireEdit(ctx, args.auth);
 
-    const seen = new Set<string>();
-    for (const ticketId of args.ticketIds) {
-      if (seen.has(ticketId)) {
-        throw new Error(`Ticket ${ticketId} is listed twice`);
-      }
-      seen.add(ticketId);
+    if (user.permWrite) {
+      await applyReorder(ctx, {
+        epicId: args.epicId,
+        checkpointId: args.checkpointId,
+        ticketIds: args.ticketIds.map((ref) => requireRealTicket(ctx, ref)),
+      });
+      return null;
     }
 
-    const tickets = await Promise.all(
-      args.ticketIds.map((ticketId) => ticketInEpic(ctx, ticketId, args.epicId)),
-    );
-
-    for (const ticket of tickets) {
-      if (ticket.checkpointId !== args.checkpointId) {
-        throw new Error(
-          `Ticket ${ticket.key} is not in the checkpoint being reordered. ` +
-            `Move it first, then reorder.`,
-        );
-      }
-    }
-
-    await Promise.all(
-      tickets.map((ticket, index) =>
-        ticket.order === index
-          ? undefined
-          : ctx.db.patch(ticket._id, { order: index }),
-      ),
-    );
+    await requestReorder(ctx, user, {
+      epicId: args.epicId,
+      checkpointId: args.checkpointId,
+      ticketIds: args.ticketIds,
+    });
     return null;
   },
 });
-
-/** Prefix and shape of the keys generated for cards created on the board. */
-const LOCAL_KEY_PREFIX = "LOCAL-";
-const LOCAL_KEY = /^LOCAL-(\d+)$/;
-
-/**
- * Next free `LOCAL-<n>` key.
- *
- * Cards created on the board have no Jira issue behind them, so they get a key
- * that says so at a glance instead of something that looks like a real ticket.
- * The number is one past the highest existing one, found through the key index
- * rather than by scanning the table.
- */
-async function nextLocalKey(ctx: MutationCtx): Promise<string> {
-  const existing = await ctx.db
-    .query("tickets")
-    .withIndex("by_key", (q) =>
-      q.gte("key", LOCAL_KEY_PREFIX).lt("key", "LOCAL."),
-    )
-    .collect();
-
-  let max = 0;
-  for (const ticket of existing) {
-    const match = LOCAL_KEY.exec(ticket.key);
-    if (match) max = Math.max(max, Number(match[1]));
-  }
-  return `${LOCAL_KEY_PREFIX}${max + 1}`;
-}
-
-async function assertKeyIsFree(ctx: MutationCtx, key: string) {
-  const clash = await ctx.db
-    .query("tickets")
-    .withIndex("by_key", (q) => q.eq("key", key))
-    .first();
-  if (clash) {
-    throw new Error(
-      `A ticket with key ${key} is already on the board. Keys identify a card ` +
-        `across imports, so they have to be unique.`,
-    );
-  }
-}
 
 /**
  * Create a card directly on the board.
@@ -413,43 +371,40 @@ export const createTicket = mutation({
     tag: v.optional(v.string()),
     githubPrs: v.optional(v.array(v.string())),
   },
-  returns: v.object({ ticketId: v.id("tickets"), key: v.string() }),
+  returns: v.object({
+    /** Null when the call became an edit request: no card exists yet. */
+    ticketId: v.union(v.id("tickets"), v.null()),
+    key: v.string(),
+  }),
   handler: async (ctx, args) => {
-    await requireWrite(ctx, args.auth);
+    const user = await requireEdit(ctx, args.auth);
 
-    const epic = await ctx.db.get(args.epicId);
-    if (!epic) throw new Error(`No epic with id ${args.epicId}`);
-    const checkpoint = await ctx.db.get(args.checkpointId);
-    if (!checkpoint) {
-      throw new Error(`No checkpoint with id ${args.checkpointId}`);
+    const fields: TicketFields = {
+      status: args.status,
+      assignee: args.assignee,
+      dueDate: args.dueDate,
+      tag: args.tag,
+      githubPrs: args.githubPrs,
+    };
+
+    if (user.permWrite) {
+      return await applyCreate(ctx, {
+        epicId: args.epicId,
+        checkpointId: args.checkpointId,
+        key: args.key,
+        title: args.title,
+        fields,
+      });
     }
 
-    const title = cleanTitle(args.title);
-    assertIsoDate(args.dueDate, "dueDate");
-
-    let key: string;
-    if (args.key !== undefined && args.key.trim() !== "") {
-      key = cleanKey(args.key);
-      await assertKeyIsFree(ctx, key);
-    } else {
-      key = await nextLocalKey(ctx);
-    }
-
-    const ticketId = await ctx.db.insert("tickets", {
-      key,
-      title,
+    const { key } = await requestCreate(ctx, user, {
       epicId: args.epicId,
       checkpointId: args.checkpointId,
-      status: args.status ?? "todo",
-      dueDate: args.dueDate,
-      githubPrs: args.githubPrs ? cleanPrUrls(args.githubPrs) : undefined,
-      tag: cleanOptionalText(args.tag, "tag"),
-      assignee: cleanOptionalText(args.assignee, "assignee"),
-      // New cards go under whatever is already in the cell.
-      order: await appendToCell(ctx, args.checkpointId, args.epicId),
+      title: args.title,
+      key: args.key,
+      fields,
     });
-
-    return { ticketId, key };
+    return { ticketId: null, key };
   },
 });
 
@@ -469,7 +424,7 @@ export const createTicket = mutation({
 export const updateTicket = mutation({
   args: {
     auth: credentialsValidator,
-    ticketId: v.id("tickets"),
+    ticketId: ticketRefValidator,
     title: v.optional(v.string()),
     checkpointId: v.optional(v.id("checkpoints")),
     status: v.optional(statusValidator),
@@ -480,44 +435,31 @@ export const updateTicket = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWrite(ctx, args.auth);
+    const user = await requireEdit(ctx, args.auth);
 
-    const ticket = await ctx.db.get(args.ticketId);
-    if (!ticket) throw new Error(`No ticket with id ${args.ticketId}`);
+    const fields: TicketFields = {
+      title: args.title,
+      status: args.status,
+      assignee: args.assignee,
+      dueDate: args.dueDate,
+      tag: args.tag,
+      githubPrs: args.githubPrs,
+    };
 
-    const patch: Partial<Doc<"tickets">> = {};
-
-    if (args.title !== undefined) patch.title = cleanTitle(args.title);
-    if (args.status !== undefined) patch.status = args.status;
-
-    if (args.checkpointId !== undefined) {
-      const checkpoint = await ctx.db.get(args.checkpointId);
-      if (!checkpoint) {
-        throw new Error(`No checkpoint with id ${args.checkpointId}`);
-      }
-      if (checkpoint._id !== ticket.checkpointId) {
-        patch.checkpointId = args.checkpointId;
-        patch.order = await appendToCell(ctx, args.checkpointId, ticket.epicId);
-      }
+    if (user.permWrite) {
+      await applyUpdate(ctx, {
+        ticketId: requireRealTicket(ctx, args.ticketId),
+        checkpointId: args.checkpointId,
+        fields,
+      });
+      return null;
     }
 
-    if (args.assignee !== undefined) {
-      patch.assignee = cleanOptionalText(args.assignee, "assignee");
-    }
-    if (args.tag !== undefined) {
-      patch.tag = cleanOptionalText(args.tag, "tag");
-    }
-    if (args.dueDate !== undefined) {
-      const dueDate = args.dueDate?.trim() || undefined;
-      assertIsoDate(dueDate, "dueDate");
-      patch.dueDate = dueDate;
-    }
-    if (args.githubPrs !== undefined) {
-      const urls = args.githubPrs?.filter((url) => url.trim() !== "") ?? [];
-      patch.githubPrs = urls.length > 0 ? cleanPrUrls(urls) : undefined;
-    }
-
-    await ctx.db.patch(ticket._id, patch);
+    await requestUpdate(ctx, user, {
+      ref: args.ticketId,
+      checkpointId: args.checkpointId,
+      fields,
+    });
     return null;
   },
 });
@@ -530,14 +472,17 @@ export const updateTicket = mutation({
  * second click before calling this.
  */
 export const deleteTicket = mutation({
-  args: { auth: credentialsValidator, ticketId: v.id("tickets") },
+  args: { auth: credentialsValidator, ticketId: ticketRefValidator },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWrite(ctx, args.auth);
+    const user = await requireEdit(ctx, args.auth);
 
-    const ticket = await ctx.db.get(args.ticketId);
-    if (!ticket) throw new Error(`No ticket with id ${args.ticketId}`);
-    await ctx.db.delete(ticket._id);
+    if (user.permWrite) {
+      await applyDelete(ctx, requireRealTicket(ctx, args.ticketId));
+      return null;
+    }
+
+    await requestDelete(ctx, user, args.ticketId);
     return null;
   },
 });

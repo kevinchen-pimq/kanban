@@ -33,6 +33,48 @@ export const checkpointKindValidator = v.union(
   v.literal("backlog"),
 );
 
+/** What one pending edit request asks for. See `convex/editRequests.ts`. */
+export const editRequestKindValidator = v.union(
+  v.literal("create"),
+  v.literal("update"),
+  v.literal("delete"),
+  v.literal("reorder"),
+);
+
+/**
+ * A card the board's writes can name: a real ticket, or — for the account that
+ * proposed it — one of its own pending `create` requests.
+ *
+ * A proposed card has no row in `tickets` yet, but it is on screen for the
+ * requester and has to be editable, draggable and deletable like any other card
+ * (that is what makes "create then update" merge into one request). Accepting the
+ * request's own id here is what keeps the client's call surface single: it always
+ * sends `ticket._id`, whatever the card is.
+ */
+export const ticketRefValidator = v.union(
+  v.id("tickets"),
+  v.id("editRequests"),
+);
+
+/**
+ * The editable half of a card, as an edit request stores it.
+ *
+ * Absent means "not part of this request"; `null` means "clear this field". Both
+ * halves of a request use this shape — `fields` is what is being asked for and
+ * `before` is what the card said when the request was first made, which is what
+ * lets the review UI show `標題: A → B` without reading history.
+ */
+export const editFieldsValidator = v.object({
+  title: v.optional(v.string()),
+  key: v.optional(v.string()),
+  checkpointId: v.optional(v.id("checkpoints")),
+  status: v.optional(statusValidator),
+  assignee: v.optional(v.union(v.string(), v.null())),
+  dueDate: v.optional(v.union(v.string(), v.null())),
+  tag: v.optional(v.union(v.string(), v.null())),
+  githubPrs: v.optional(v.union(v.array(v.string()), v.null())),
+});
+
 export default defineSchema({
   // X axis: one column per epic, left to right by `order`.
   epics: defineTable({
@@ -95,7 +137,7 @@ export default defineSchema({
   // there is no session, no expiry and no revocation beyond deleting or
   // re-seeding the account. See `docs/data-model.md` for the trade-off.
   //
-  // The three permissions are independent and default to false, which is what
+  // The four permissions are independent and default to false, which is what
   // makes a fresh registration a *pending* one: it can log in as far as being
   // told it is awaiting approval, and nothing else.
   users: defineTable({
@@ -110,9 +152,52 @@ export default defineSchema({
     permWrite: v.boolean(),
     // See pending registrations and approve or dismiss them.
     permApproveRegister: v.boolean(),
+    // Propose edits instead of making them: the board offers every editing
+    // affordance, and each one writes an `editRequests` row for somebody with
+    // `permWrite` to approve. Optional because accounts created before edit
+    // requests existed have no such field — absent reads as false everywhere,
+    // which is the same answer a backfill would have given without the write.
+    permEditRequest: v.optional(v.boolean()),
   })
     // `account` is the natural key every credential check looks up.
     .index("by_account", ["account"]),
+
+  // Edits proposed by an account that has `permEditRequest` but not `permWrite`.
+  //
+  // One row is one pending request, and there is at most one per (requester,
+  // target): a second operation on the same card merges into the row that is
+  // already there, so a card someone moved and then retitled is one request with
+  // one diff rather than two things to approve. Requests are not history — an
+  // approved or dismissed row is deleted.
+  //
+  // The requester sees their own pending rows overlaid on the board by
+  // `board:get`, which is why they survive a reload: the "not yet real" version
+  // of the board lives here, on the server, not in the tab.
+  editRequests: defineTable({
+    requestedBy: v.id("users"),
+    // The requester's account name, copied so the review list can name them
+    // without reading the `users` table row by row.
+    account: v.string(),
+    kind: editRequestKindValidator,
+    // The card being changed, for `update` and `delete`.
+    ticketId: v.optional(v.id("tickets")),
+    // The cell, for `create` (where the card would land) and `reorder`.
+    epicId: v.optional(v.id("epics")),
+    checkpointId: v.optional(v.id("checkpoints")),
+    // What is being asked for. A `create` carries the whole card here; an
+    // `update` carries only the fields it changes.
+    fields: v.optional(editFieldsValidator),
+    // What the card said when this request was first made — the left-hand side
+    // of the diff. Absent on `create` (there was nothing) and on `reorder`.
+    before: v.optional(editFieldsValidator),
+    // The cell's cards in the requested order, for `reorder`. May name one of
+    // the requester's own pending `create` requests, which approval drops: a
+    // card that does not exist yet cannot be given a position.
+    ticketIds: v.optional(v.array(ticketRefValidator)),
+  })
+    // Everything is looked up per requester: the overlay reads their own rows,
+    // and so does the merge that folds a second operation into the first.
+    .index("by_requester", ["requestedBy"]),
 
   // Board-wide settings, as a single document (the first row wins).
   //

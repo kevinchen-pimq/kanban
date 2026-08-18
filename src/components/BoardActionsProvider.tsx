@@ -22,15 +22,27 @@ export type BoardActions = {
   /** Rows the edit form can move a card to. */
   checkpoints: readonly Checkpoint[];
   /**
-   * Whether the signed-in account may edit (`permWrite`).
+   * Whether the signed-in account may reach for an editing affordance at all
+   * (`permWrite` **or** `permEditRequest`).
    *
-   * It travels with the actions because it decides whether they are offered at
-   * all: without it a read-only reader would see a "+" in every cell, a pointer
-   * cursor on every card and a clickable status dot, all of which the server
-   * would then refuse. This hides the affordances; `convex/auth.ts` is what
-   * actually stops the write.
+   * It travels with the actions because it decides whether they are offered:
+   * without it a read-only reader would see a "+" in every cell, a pointer cursor
+   * on every card and a clickable status dot, all of which the server would then
+   * refuse. This hides the affordances; `convex/auth.ts` is what actually stops
+   * the write.
    */
-  canWrite: boolean;
+  canEdit: boolean;
+  /**
+   * True when those affordances propose rather than apply (`permEditRequest`
+   * without `permWrite`).
+   *
+   * Nothing about *how* the board calls the server changes — the same mutations
+   * with the same arguments — so this only affects wording: a card badge saying
+   * the change is waiting, and a dialog that says "提議" instead of "儲存".
+   */
+  requestMode: boolean;
+  /** Take back the pending request on a card. Only meaningful in request mode. */
+  withdrawRequest: (ticket: Ticket) => Promise<void>;
 };
 
 const noop: BoardActions = {
@@ -38,7 +50,9 @@ const noop: BoardActions = {
   openEdit: () => {},
   cycleStatus: () => {},
   checkpoints: [],
-  canWrite: false,
+  canEdit: false,
+  requestMode: false,
+  withdrawRequest: async () => {},
 };
 
 const BoardActionsContext = createContext<BoardActions>(noop);

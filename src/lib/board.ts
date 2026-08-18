@@ -1,9 +1,34 @@
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { formatMonthDay, isBefore } from "./dates";
 
 export type Epic = Doc<"epics">;
 export type Checkpoint = Doc<"checkpoints">;
-export type Ticket = Doc<"tickets">;
+
+/**
+ * A card the board is showing, and — for the account that proposed it — the edit
+ * request it is showing instead of the real data.
+ *
+ * `board:get` overlays the caller's own pending requests, so a card can be one
+ * that does not exist yet (`kind: "create"`, and then `_id` is the request's id),
+ * or a real card wearing a change nobody has approved. Cards nobody has a pending
+ * request for carry no marker at all. See `convex/editRequests.ts`.
+ */
+export type PendingEdit = {
+  requestId: Id<"editRequests">;
+  kind: "create" | "update" | "delete" | "reorder";
+};
+
+/**
+ * How a card is addressed. Usually a real row, but a card that only exists as
+ * somebody's pending "create" proposal is addressed by that request's id — and
+ * the `board:*` mutations take either, so one click path serves both.
+ */
+export type TicketId = Id<"tickets"> | Id<"editRequests">;
+
+export type Ticket = Omit<Doc<"tickets">, "_id"> & {
+  _id: TicketId;
+  pendingEdit?: PendingEdit;
+};
 /** Board-wide settings; see `convex/schema.ts` and `data:setConfig`. */
 export type BoardConfig = Doc<"config">;
 export type TicketStatus = Ticket["status"];

@@ -20,15 +20,16 @@ import type { Doc } from "./_generated/dataModel";
  * the deliberate trade for not building sessions, rotation or revocation. See
  * `docs/data-model.md`.
  *
- * Three independent permissions, all false on registration:
+ * Four independent permissions, all false on registration:
  *
  * - `permRead` — read the board. False means "registered, awaiting approval".
  * - `permWrite` — edit it (drag, create, update, delete, status).
  * - `permApproveRegister` — see and act on pending registrations.
+ * - `permEditRequest` — use every editing affordance, but as a *proposal*: the
+ *   write becomes an `editRequests` row for a `permWrite` account to approve.
  *
- * `approve` only ever grants `permRead`; write and approve rights are handed out
- * from a terminal through `seedUser`, so no browser call can widen its own
- * powers.
+ * `approve` only ever grants `permRead`; the other three are handed out from a
+ * terminal through `seedUser`, so no browser call can widen its own powers.
  */
 
 /** The credential pair every authenticated function takes. */
@@ -50,12 +51,17 @@ export const AUTH_DENIED = "AUTH_DENIED";
 const ACCOUNT_SHAPE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const TOKEN_HASH_SHAPE = /^[0-9a-f]{64}$/;
 
-type Permission = "permRead" | "permWrite" | "permApproveRegister";
+type Permission =
+  | "permRead"
+  | "permWrite"
+  | "permApproveRegister"
+  | "permEditRequest";
 
 const PERMISSION_LABEL: Record<Permission, string> = {
   permRead: "讀取",
   permWrite: "編輯",
   permApproveRegister: "審核註冊",
+  permEditRequest: "提議編輯",
 };
 
 /**
@@ -140,6 +146,31 @@ export function requireWrite(ctx: QueryCtx, credentials: Credentials) {
 }
 
 /**
+ * Reaching for an editing affordance at all — the check in front of every
+ * `board:*` mutation.
+ *
+ * It answers "may this account ask for this change", not "does the change apply
+ * now": `permWrite` writes straight through, `permEditRequest` turns the same
+ * call into a pending edit request. The caller decides which by looking at the
+ * returned user, so the two paths cannot disagree about who is allowed in.
+ */
+export async function requireEdit(
+  ctx: QueryCtx,
+  credentials: Credentials,
+): Promise<Doc<"users">> {
+  const user = await authenticate(ctx, credentials);
+  if (!user) {
+    throw new Error(`${AUTH_DENIED}: 帳號或密碼錯誤，請重新登入。`);
+  }
+  if (!user.permWrite && !user.permEditRequest) {
+    throw new Error(
+      `${AUTH_DENIED}: 帳號 ${user.account} 沒有編輯權限，也不能提議編輯。`,
+    );
+  }
+  return user;
+}
+
+/**
  * What a credential pair is currently worth.
  *
  * Deliberately does not throw: it is both the login form's answer and the live
@@ -160,6 +191,7 @@ export const login = query({
       account: v.string(),
       permWrite: v.boolean(),
       permApproveRegister: v.boolean(),
+      permEditRequest: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -173,6 +205,8 @@ export const login = query({
       account: user.account,
       permWrite: user.permWrite,
       permApproveRegister: user.permApproveRegister,
+      // Optional on the row (accounts predate it); absent is false.
+      permEditRequest: user.permEditRequest ?? false,
     };
   },
 });
@@ -201,6 +235,7 @@ export const register = mutation({
       permRead: false,
       permWrite: false,
       permApproveRegister: false,
+      permEditRequest: false,
     });
     return null;
   },
@@ -234,9 +269,9 @@ export const pendingUsers = query({
 /**
  * Let a pending registration in — read-only.
  *
- * Write and approve rights are not grantable from the browser at all; they are
- * a `seedUser` call from a terminal. An approval is therefore never a way to
- * hand out more than the approver meant to.
+ * Write, approve and propose rights are not grantable from the browser at all;
+ * they are a `seedUser` call from a terminal. An approval is therefore never a
+ * way to hand out more than the approver meant to.
  */
 export const approve = mutation({
   args: { auth: credentialsValidator, userId: v.id("users") },
@@ -281,13 +316,17 @@ export const dismiss = mutation({
  *
  * Internal, so it runs from a terminal against a chosen deployment and never
  * from a browser. This is how the first administrator gets in, and the only way
- * `permWrite` / `permApproveRegister` are ever granted:
+ * `permWrite` / `permApproveRegister` / `permEditRequest` are ever granted:
  *
  * ```bash
  * npx convex run auth:seedUser '{"account":"someone",
  *   "tokenHash":"<sha256 of kanban:someone:<password>>",
- *   "permRead":true,"permWrite":true,"permApproveRegister":true}'
+ *   "permRead":true,"permWrite":true,"permApproveRegister":true,
+ *   "permEditRequest":false}'
  * ```
+ *
+ * `permEditRequest` may be left out, which reads as false — so calls written
+ * before edit requests existed still mean what they meant.
  *
  * The hash has to be computed outside — the same
  * `sha256("kanban:<account>:<password>")` the browser uses — which keeps this
@@ -300,6 +339,7 @@ export const seedUser = internalMutation({
     permRead: v.boolean(),
     permWrite: v.boolean(),
     permApproveRegister: v.boolean(),
+    permEditRequest: v.optional(v.boolean()),
   },
   returns: v.object({ created: v.boolean() }),
   handler: async (ctx, args) => {
@@ -309,6 +349,7 @@ export const seedUser = internalMutation({
       permRead: args.permRead,
       permWrite: args.permWrite,
       permApproveRegister: args.permApproveRegister,
+      permEditRequest: args.permEditRequest ?? false,
     };
 
     const existing = await byAccount(ctx, account);
@@ -321,15 +362,28 @@ export const seedUser = internalMutation({
   },
 });
 
-/** Delete an account. Internal: this is the revocation path. */
+/**
+ * Delete an account. Internal: this is the revocation path.
+ *
+ * Their pending edit requests go too. A request is a live proposal, not a record
+ * of what happened, so an account that no longer exists should not leave
+ * something for a reviewer to approve in its name.
+ */
 export const deleteUser = internalMutation({
   args: { account: v.string() },
-  returns: v.object({ deleted: v.boolean() }),
+  returns: v.object({ deleted: v.boolean(), editRequestsDeleted: v.number() }),
   handler: async (ctx, args) => {
     const user = await byAccount(ctx, cleanAccount(args.account));
-    if (!user) return { deleted: false };
+    if (!user) return { deleted: false, editRequestsDeleted: 0 };
+
+    const requests = await ctx.db
+      .query("editRequests")
+      .withIndex("by_requester", (q) => q.eq("requestedBy", user._id))
+      .collect();
+    for (const request of requests) await ctx.db.delete(request._id);
+
     await ctx.db.delete(user._id);
-    return { deleted: true };
+    return { deleted: true, editRequestsDeleted: requests.length };
   },
 });
 
@@ -342,17 +396,19 @@ export const listUsers = internalQuery({
       permRead: v.boolean(),
       permWrite: v.boolean(),
       permApproveRegister: v.boolean(),
+      permEditRequest: v.boolean(),
     }),
   ),
   handler: async (ctx) => {
     const users = await ctx.db.query("users").take(500);
     return users
       .sort((a, b) => a.account.localeCompare(b.account))
-      .map(({ account, permRead, permWrite, permApproveRegister }) => ({
-        account,
-        permRead,
-        permWrite,
-        permApproveRegister,
+      .map((user) => ({
+        account: user.account,
+        permRead: user.permRead,
+        permWrite: user.permWrite,
+        permApproveRegister: user.permApproveRegister,
+        permEditRequest: user.permEditRequest ?? false,
       }));
   },
 });

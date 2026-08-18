@@ -38,8 +38,16 @@ import { api } from "../../convex/_generated/api";
 export type Session = {
   credentials: Credentials;
   account: string;
+  /** `permWrite`: edits land immediately, and this account reviews requests. */
   canWrite: boolean;
+  /** `permApproveRegister`: sees the pending-registration inbox. */
   canApprove: boolean;
+  /**
+   * `permEditRequest`: the editing affordances are all offered, but each one
+   * proposes the change instead of making it. Independent of `canWrite`, which
+   * wins when both are set — a direct writer never proposes anything.
+   */
+  canRequest: boolean;
 };
 
 type AuthState =
@@ -122,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         account: result.account,
         canWrite: result.permWrite,
         canApprove: result.permApproveRegister,
+        canRequest: result.permEditRequest,
       },
     };
   }, [credentials, notice, result]);

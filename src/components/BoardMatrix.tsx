@@ -197,7 +197,7 @@ function DropCell({
   tickets: readonly Ticket[];
   today: string;
 }) {
-  const { openCreate, canWrite } = useBoardActions();
+  const { openCreate, canEdit } = useBoardActions();
   const data: CellDropData = { checkpointId, epicId };
   const cellId = `cell:${checkpointId}:${epicId}`;
   const { setNodeRef, over, active } = useDroppable({ id: cellId, data });
@@ -231,7 +231,7 @@ function DropCell({
       {/* Unobtrusive on purpose: one per cell, only on hover, so the board still
           reads as a board rather than a form. Absent entirely for a read-only
           account. */}
-      {canWrite && (
+      {canEdit && (
         <button
           type="button"
           onClick={() => openCreate(epicId, checkpointId)}
