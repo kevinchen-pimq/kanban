@@ -1,6 +1,7 @@
 import { getConvexUrl } from "@convex-dev/static-hosting";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { Credentials } from "@/lib/auth";
 import { STATUS_ORDER, type Ticket, type TicketStatus } from "@/lib/board";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -40,6 +41,13 @@ export function nextStatus(status: TicketStatus): TicketStatus {
  */
 export function useStatusCycle(
   save: (ticketId: Id<"tickets">, status: TicketStatus) => Promise<unknown>,
+  /**
+   * The signed-in credential pair. The normal write carries it through `save`,
+   * but the teardown flush builds its own request body, so it needs the pair
+   * here too — a keepalive POST without it is rejected like any other
+   * unauthenticated call.
+   */
+  auth: Credentials,
 ) {
   const [pending, setPending] = useState<
     ReadonlyMap<Id<"tickets">, TicketStatus>
@@ -50,6 +58,8 @@ export function useStatusCycle(
   const latest = useRef(new Map<Id<"tickets">, TicketStatus>());
   const saveRef = useRef(save);
   saveRef.current = save;
+  const authRef = useRef(auth);
+  authRef.current = auth;
 
   const send = useCallback((ticketId: Id<"tickets">) => {
     const armed = timers.current.get(ticketId);
@@ -112,7 +122,7 @@ export function useStatusCycle(
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           path: "board:updateTicket",
-          args: { ticketId, status },
+          args: { auth: authRef.current, ticketId, status },
           format: "json",
         }),
         keepalive: true,

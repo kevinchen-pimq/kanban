@@ -86,6 +86,34 @@ export default defineSchema({
     .index("by_key", ["key"])
     .index("by_checkpoint_and_epic", ["checkpointId", "epicId"]),
 
+  // Accounts that may read or edit the board.
+  //
+  // `tokenHash` is sha256("kanban:<account>:<password>"), computed in the
+  // browser: the password itself never reaches the server, is never stored and
+  // never appears in a log. The hash is the whole credential — every query and
+  // mutation carries { account, tokenHash } and is checked against this row, so
+  // there is no session, no expiry and no revocation beyond deleting or
+  // re-seeding the account. See `docs/data-model.md` for the trade-off.
+  //
+  // The three permissions are independent and default to false, which is what
+  // makes a fresh registration a *pending* one: it can log in as far as being
+  // told it is awaiting approval, and nothing else.
+  users: defineTable({
+    // Lowercased, trimmed. Also what the token hash is computed over, so it is
+    // normalised on the client before hashing.
+    account: v.string(),
+    // Hex sha256 of "kanban:<account>:<password>", 64 lowercase hex chars.
+    tokenHash: v.string(),
+    // Read the board at all. `false` means "registered, awaiting approval".
+    permRead: v.boolean(),
+    // Edit the board: drag, create, update, delete, cycle status.
+    permWrite: v.boolean(),
+    // See pending registrations and approve or dismiss them.
+    permApproveRegister: v.boolean(),
+  })
+    // `account` is the natural key every credential check looks up.
+    .index("by_account", ["account"]),
+
   // Board-wide settings, as a single document (the first row wins).
   //
   // These are deployment settings rather than board data: the Jira site the

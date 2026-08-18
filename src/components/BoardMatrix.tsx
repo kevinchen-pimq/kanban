@@ -197,7 +197,7 @@ function DropCell({
   tickets: readonly Ticket[];
   today: string;
 }) {
-  const { openCreate } = useBoardActions();
+  const { openCreate, canWrite } = useBoardActions();
   const data: CellDropData = { checkpointId, epicId };
   const cellId = `cell:${checkpointId}:${epicId}`;
   const { setNodeRef, over, active } = useDroppable({ id: cellId, data });
@@ -229,16 +229,19 @@ function DropCell({
       )}
     >
       {/* Unobtrusive on purpose: one per cell, only on hover, so the board still
-          reads as a board rather than a form. */}
-      <button
-        type="button"
-        onClick={() => openCreate(epicId, checkpointId)}
-        aria-label="在這一格新增卡片"
-        title="在這一格新增卡片"
-        className="absolute top-1 right-1 rounded-md p-1 text-slate-300 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-indigo-600 focus-visible:opacity-100"
-      >
-        <Plus className="size-3.5" aria-hidden />
-      </button>
+          reads as a board rather than a form. Absent entirely for a read-only
+          account. */}
+      {canWrite && (
+        <button
+          type="button"
+          onClick={() => openCreate(epicId, checkpointId)}
+          aria-label="在這一格新增卡片"
+          title="在這一格新增卡片"
+          className="absolute top-1 right-1 rounded-md p-1 text-slate-300 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-indigo-600 focus-visible:opacity-100"
+        >
+          <Plus className="size-3.5" aria-hidden />
+        </button>
+      )}
 
       <div className="min-h-20 space-y-2.5">
         {tickets.length === 0 ? (

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { credentialsValidator, requireRead, requireWrite } from "./auth";
 import { accentValidator, checkpointKindValidator, statusValidator } from "./schema";
 import {
   assertIsoDate,
@@ -91,9 +92,13 @@ function isInWindow(checkpoint: Doc<"checkpoints">, fromDate: string | undefined
  * board already has exactly one subscription to keep track of. A second query
  * would add a second loading state, and cards would paint once without their
  * Jira links and again with them.
+ *
+ * Requires `permRead`. Nothing about the board — not the epic names, not the
+ * ticket titles — is readable without a credential the `users` table knows.
  */
 export const get = query({
   args: {
+    auth: credentialsValidator,
     /** ISO date, "YYYY-MM-DD". Omit for the whole history. */
     fromDate: v.optional(v.string()),
   },
@@ -109,6 +114,8 @@ export const get = query({
     truncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
+    await requireRead(ctx, args.auth);
+
     const [epics, allCheckpoints, config] = await Promise.all([
       ctx.db.query("epics").withIndex("by_order").order("asc").collect(),
       ctx.db.query("checkpoints").withIndex("by_order").order("asc").take(CHECKPOINT_LIMIT),
@@ -164,12 +171,14 @@ export const get = query({
 /**
  * The board's public writes.
  *
- * Everything below this line is callable from any browser that can load the
- * site, **with no authentication**. That is a deliberate trade for an internal,
- * unlisted board the team edits directly, and it is the reason each handler
- * validates as strictly as the importer does: the guard rails are the only thing
- * standing between the table and a hand-written request. Import and config
- * functions stay internal (`data.ts`).
+ * Everything below this line takes an `auth` credential pair and requires
+ * `permWrite` (`convex/auth.ts`) before it touches anything — the UI hides the
+ * editing affordances from a read-only account, but this is the check that
+ * actually holds, for the board and for any hand-written request.
+ *
+ * Authenticated is not the same as trusted, so each handler still validates as
+ * strictly as the importer does; the shared field checks live in
+ * `validation.ts`. Import and config functions stay internal (`data.ts`).
  *
  * None of these writes is a new source of truth. A payload re-import decides
  * again where a ticket sits and what it says, and with `pruneEpics` it deletes
@@ -255,6 +264,7 @@ async function appendToCell(
  */
 export const moveTicket = mutation({
   args: {
+    auth: credentialsValidator,
     ticketId: v.id("tickets"),
     /** The ticket's current epic, echoed back as a guard. */
     epicId: v.id("epics"),
@@ -262,6 +272,8 @@ export const moveTicket = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireWrite(ctx, args.auth);
+
     const ticket = await ticketInEpic(ctx, args.ticketId, args.epicId);
 
     const checkpoint = await ctx.db.get(args.checkpointId);
@@ -296,6 +308,7 @@ export const moveTicket = mutation({
  */
 export const reorderCell = mutation({
   args: {
+    auth: credentialsValidator,
     epicId: v.id("epics"),
     checkpointId: v.id("checkpoints"),
     /** Every ticket in the cell, in the order it should be shown. */
@@ -303,6 +316,8 @@ export const reorderCell = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireWrite(ctx, args.auth);
+
     const seen = new Set<string>();
     for (const ticketId of args.ticketIds) {
       if (seen.has(ticketId)) {
@@ -387,6 +402,7 @@ async function assertKeyIsFree(ctx: MutationCtx, key: string) {
  */
 export const createTicket = mutation({
   args: {
+    auth: credentialsValidator,
     title: v.string(),
     epicId: v.id("epics"),
     checkpointId: v.id("checkpoints"),
@@ -399,6 +415,8 @@ export const createTicket = mutation({
   },
   returns: v.object({ ticketId: v.id("tickets"), key: v.string() }),
   handler: async (ctx, args) => {
+    await requireWrite(ctx, args.auth);
+
     const epic = await ctx.db.get(args.epicId);
     if (!epic) throw new Error(`No epic with id ${args.epicId}`);
     const checkpoint = await ctx.db.get(args.checkpointId);
@@ -450,6 +468,7 @@ export const createTicket = mutation({
  */
 export const updateTicket = mutation({
   args: {
+    auth: credentialsValidator,
     ticketId: v.id("tickets"),
     title: v.optional(v.string()),
     checkpointId: v.optional(v.id("checkpoints")),
@@ -461,6 +480,8 @@ export const updateTicket = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireWrite(ctx, args.auth);
+
     const ticket = await ctx.db.get(args.ticketId);
     if (!ticket) throw new Error(`No ticket with id ${args.ticketId}`);
 
@@ -509,9 +530,11 @@ export const updateTicket = mutation({
  * second click before calling this.
  */
 export const deleteTicket = mutation({
-  args: { ticketId: v.id("tickets") },
+  args: { auth: credentialsValidator, ticketId: v.id("tickets") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireWrite(ctx, args.auth);
+
     const ticket = await ctx.db.get(args.ticketId);
     if (!ticket) throw new Error(`No ticket with id ${args.ticketId}`);
     await ctx.db.delete(ticket._id);

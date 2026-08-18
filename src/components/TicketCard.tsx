@@ -31,16 +31,19 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
   const prs = ticket.githubPrs ?? [];
   const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0);
   const jiraUrl = jiraIssueUrl(useBoardConfig()?.jiraBaseUrl, ticket.key);
-  const { openEdit, cycleStatus } = useBoardActions();
+  const { openEdit, cycleStatus, canWrite } = useBoardActions();
 
   return (
     // Clicking anywhere that is not a control opens the card for editing. The
     // drag sensor needs 6px of travel before it takes over, so a click stays a
-    // click; `openEdit` also ignores the click that ends a drag.
+    // click; `openEdit` also ignores the click that ends a drag. A read-only
+    // account gets neither the handler nor the pointer cursor — the card is
+    // something to read, and the links on it still work.
     <article
-      onClick={() => openEdit(ticket)}
+      onClick={canWrite ? () => openEdit(ticket) : undefined}
       className={cn(
-        "flex cursor-pointer flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md",
+        "flex flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md",
+        canWrite && "cursor-pointer",
         status.cardHover,
       )}
     >
@@ -52,21 +55,34 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
           <TooltipTrigger asChild>
             {/* The dot is the fastest way to move a card along, so it is a
                 button: each click advances one status. The write is debounced
-                in `App`, so several clicks in a row cost one write. */}
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation(); // not a request to open the card
-                cycleStatus(ticket);
-              }}
-              onPointerDown={keepPointerFromDrag}
-              aria-label={`狀態: ${status.label}，點一下切換到下一個狀態`}
-              className="shrink-0 rounded-full pt-0.5 transition hover:scale-125"
-            >
-              <StatusDot status={ticket.status} className="block" />
-            </button>
+                in `BoardApp`, so several clicks in a row cost one write. Without
+                write access it is just the dot, and says so. */}
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation(); // not a request to open the card
+                  cycleStatus(ticket);
+                }}
+                onPointerDown={keepPointerFromDrag}
+                aria-label={`狀態: ${status.label}，點一下切換到下一個狀態`}
+                className="shrink-0 rounded-full pt-0.5 transition hover:scale-125"
+              >
+                <StatusDot status={ticket.status} className="block" />
+              </button>
+            ) : (
+              <span
+                aria-label={`狀態: ${status.label}`}
+                className="shrink-0 rounded-full pt-0.5"
+              >
+                <StatusDot status={ticket.status} className="block" />
+              </span>
+            )}
           </TooltipTrigger>
-          <TooltipContent>狀態: {status.label}（點一下切換）</TooltipContent>
+          <TooltipContent>
+            狀態: {status.label}
+            {canWrite && "（點一下切換）"}
+          </TooltipContent>
         </Tooltip>
       </div>
 

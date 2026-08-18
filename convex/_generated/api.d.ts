@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as board from "../board.js";
 import type * as data from "../data.js";
 import type * as staticHosting from "../staticHosting.js";
@@ -20,6 +21,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   board: typeof board;
   data: typeof data;
   staticHosting: typeof staticHosting;

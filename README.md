@@ -10,7 +10,9 @@
 
 Jira 的看板以狀態為欄，回答的是「這張票現在在哪個階段」；但團隊每週檢視進度時要回答的是「**這一週各專案各做完了什麼**」——跨多個 epic、以週為粒度的交付視角，Jira 沒有現成的呈現方式。這個看板把 Jira 的工單資料重新以「專案 × 週」的矩陣排列，供每週 checkpoint 會議與進度回顧使用。
 
-資料來源是 Jira（透過匯入流程同步上板），看板不回寫 Jira。呈現以外唯一能在看板上做的修改是**拖曳卡片換週次**（限同一個 Epic 欄位內），它走 `board:moveTicket` 這個**沒有認證**的公開 mutation——任何打得開網站的人都能移動卡片，這是內部使用刻意接受的取捨。之後對該 epic 完整重新匯入時，payload 仍是事實來源，會蓋掉手動拖過的位置。
+資料來源是 Jira（透過匯入流程同步上板），看板不回寫 Jira。看板本身也能編輯——拖曳換週次或排序、新增／修改／刪除卡片、點燈號換狀態——但 payload 仍是事實來源，之後對該 epic 完整重新匯入時會蓋掉手動的調整。
+
+看板前面有一層簡單的帳號密碼登入：讀看板要 `permRead`，編輯要 `permWrite`，註冊之後要有權限的人按通過才進得來（見 [docs/data-model.md](docs/data-model.md) 的「登入與權限」）。
 
 ## 在哪裡可以用到
 
@@ -47,7 +49,7 @@ npm run deploy:dev   # 先在 dev deployment 做煙霧測試
 
 | 文件 | 內容 |
 | --- | --- |
-| [docs/data-model.md](docs/data-model.md) | 資料模型：三張表、狀態燈號、刻意的設計決定 |
+| [docs/data-model.md](docs/data-model.md) | 資料模型：五張表、狀態燈號、登入與權限、刻意的設計決定 |
 | [docs/architecture.md](docs/architecture.md) | 專案結構與前端實作細節（lazy loading、版面） |
 | [docs/progress.md](docs/progress.md) | 當前進度與尚未實作的範圍 |
 | [.claude/skills/jira-board-import/](.claude/skills/jira-board-import/SKILL.md) | 從 Jira 匯入 epic 的完整流程；匯入腳本與 [payload 格式／更新看板資料](.claude/skills/jira-board-import/references/updating-board-data.md) 都在這裡 |

@@ -21,6 +21,16 @@ export type BoardActions = {
   cycleStatus: (ticket: Ticket) => void;
   /** Rows the edit form can move a card to. */
   checkpoints: readonly Checkpoint[];
+  /**
+   * Whether the signed-in account may edit (`permWrite`).
+   *
+   * It travels with the actions because it decides whether they are offered at
+   * all: without it a read-only reader would see a "+" in every cell, a pointer
+   * cursor on every card and a clickable status dot, all of which the server
+   * would then refuse. This hides the affordances; `convex/auth.ts` is what
+   * actually stops the write.
+   */
+  canWrite: boolean;
 };
 
 const noop: BoardActions = {
@@ -28,6 +38,7 @@ const noop: BoardActions = {
   openEdit: () => {},
   cycleStatus: () => {},
   checkpoints: [],
+  canWrite: false,
 };
 
 const BoardActionsContext = createContext<BoardActions>(noop);

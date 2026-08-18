@@ -7,13 +7,21 @@ convex/
   schema.ts          資料表與共用 validator
   board.ts           board:get — 依時間區間回傳看板（含 config）的單一 reactive query
                      board:moveTicket / reorderCell / createTicket / updateTicket /
-                     deleteTicket — 看板的公開寫入面（無認證，見 data-model.md）
+                     deleteTicket — 看板的公開寫入面
+                     每個 handler 第一行是 requireRead / requireWrite
+  auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
+                     requirePermission、login / register / pendingUsers /
+                     approve / dismiss，以及 internal 的 seedUser / deleteUser /
+                     listUsers（見 data-model.md 的「登入與權限」）
   validation.ts      匯入與公開 mutation 共用的欄位檢查
   staticHosting.ts   re-export static-hosting component 的 deployment query
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
                      setConfig / getConfig — 看板設定（internal）
   convex.config.ts   掛載 static-hosting component
 src/
+  App.tsx            登入閘門：四個狀態，其中一個是看板
+  BoardApp.tsx       看板本身（DndContext、board:get 訂閱、所有 mutation 呼叫）
+  lib/auth.ts        Credentials 型別、Web Crypto 算 tokenHash、localStorage 存取
   lib/board.ts       型別、樣式對應表、checkpoint 與逾期的推導邏輯
   lib/dates.ts       ISO 日期工具（以字串比較避開時區偏移）
   lib/github.ts      PR 網址 → #編號 徽章文字
@@ -23,7 +31,10 @@ src/
   lib/filters.ts     篩選選擇的 localStorage 存取（版本化 key、載入時驗證）
   lib/dnd.ts         拖曳的資料型別、暫存區 id、碰撞判定、drop 目標解析
   hooks/             useStatusCycle — 狀態燈號的點擊循環與 debounce
-  components/        BoardHeader / BoardMatrix / TicketCard / StatusDot
+  components/        AuthProvider — 憑證的 context（訂閱 auth:login）
+                     LoginScreen — 登入／註冊表單與等待審核的畫面
+                     AccountBar — header 右側：審核鈴鐺、帳號、唯讀徽章、登出
+                     BoardHeader / BoardMatrix / TicketCard / StatusDot
                      MultiSelectFilter — 狀態與負責人共用的多選下拉
                      AssigneeAvatar — 卡片與篩選選單共用的負責人頭像
                      BoardConfigProvider — 看板設定的 context（來自 board:get）
@@ -41,6 +52,18 @@ docs/                本目錄：資料模型、專案結構、進度
 ```
 
 `convex/_generated/` 有進版控，所以剛 clone 下來不需要先登入 Convex 就能 `npm run build`。
+
+## 登入閘門與唯讀看板
+
+權限的語意、`users` 表與帳號怎麼開，都在 `docs/data-model.md` 的「登入與權限」。這裡只講前端怎麼組起來。
+
+`App.tsx` 現在只有一件事：`AuthProvider` 包著一個四路的 switch。`AuthProvider` 從 localStorage 讀一次憑證，然後**訂閱** `auth:login`（不是呼叫一次就算了）——帳號被刪、密碼被換、`permWrite` 被打開，都會在不重新載入的情況下反映到畫面上。看板（`BoardApp.tsx`）**只在 `authenticated` 掛載**：`board:get` 對壞憑證是丟錯的，而丟錯的 query 會把整頁帶走；讓憑證失效的那一次 render 直接把看板卸載，錯誤就沒有機會浮出來，使用者看到的是登入頁加一行「登入資訊已失效」。四個狀態裡 `loading` 也是刻意的——省掉它會讓已登入的人每次開頁都先閃一下登入表單。
+
+登入頁與等候室由 `FrontDoor` 包住，裡面放 `UpdateNotice`：`staticHosting:getCurrentDeployment` 是唯一不收憑證的 query，正是為了讓停在登入頁的分頁也能知道有新版本。
+
+`permWrite=false` 的人拿到唯讀看板。`canWrite` 搭現成的 `BoardActions` context 走，不另外拉一條 prop：格子的「+」不繪製，卡片不再 `cursor-pointer` 也不開表單，狀態燈號從 `<button>` 換成 `<span>`（帶 `aria-label`，讀者還是知道那是什麼顏色），`useSortable({ disabled })` 讓卡片拖不動。**這只是不給誤導性的 affordance**——真正的防線是後端每個 handler 的 `requireWrite`。
+
+審核鈴鐺在 `AccountBar`（header 右上，和帳號、唯讀徽章、登出按鈕同一排），只在 `permApproveRegister` 時繪製。它訂閱 `auth:pendingUsers`，所以有人註冊時紅點會自己亮起來，不必重新載入；點開列出待審帳號，每個給「通過」與「拒絕」。通過只給 `permRead`，這件事寫在選單的註腳上，因為那是最容易誤會的地方。
 
 ## 時間區間與 lazy loading
 
@@ -90,7 +113,7 @@ Epic 與負責人的選項都是從當下看板資料推導的，不是寫死的
 
 ## 拖曳改週次與暫存區
 
-拖曳用 `@dnd-kit/core`：`DndContext` 在 `App`，卡片是 `DraggableTicket`，每個 (checkpoint, epic) 格子是 droppable。四個要點：
+拖曳用 `@dnd-kit/core`：`DndContext` 在 `BoardApp`，卡片是 `DraggableTicket`，每個 (checkpoint, epic) 格子是 droppable。四個要點：
 
 - **只能上下移動，不能左右換欄。** 格子在 hover 時自己比對「拖曳中的卡片是哪個 epic」：同欄標靛藍並顯示「放這裡」，別的 epic 標紅顯示「不能跨 Epic」且放下無效。同一條規則在 `board:moveTicket` 再驗一次，前端的視覺提示不是唯一的防線。
 - **暫存區。** 拖曳一開始，畫面底部中央會出現暫存區；把卡片丟進去就先從矩陣裡「拿起來」（純前端狀態，沒有任何寫入），捲到目標週次後再從暫存區拖出去放。暫存區在還有卡片或還在拖曳時保持顯示。空的時候它只有一行提示字，那是很難命中的目標，所以空狀態給了固定尺寸——量到的 289×45 的兩倍（578×90）；裝了卡片之後就照內容長大。它浮在矩陣上方，所以碰撞判定用 `trayFirstCollision`：指標落在暫存區內時，優先給暫存區，不然 `pointerWithin` 有機會把 drop 判給底下被遮住的格子。
@@ -137,12 +160,12 @@ Epic 與負責人的選項都是從當下看板資料推導的，不是寫死的
 
 override 在資料進入篩選之前就套上去，所以卡片、暫存區的 chip、拖曳中的預覽三個地方講的都是同一個狀態。
 
-計時器還沒到就離開頁面的情況，實測過：WebSocket 在導覽時就被拆掉，普通的 mutation 送不出去（點一下馬上重新載入 → 沒寫進去）。所以 `pagehide` / `visibilitychange` 的 flush 改走 Convex 的 HTTP mutation 端點並加上 `keepalive: true`——這是 `navigator.sendBeacon` 那一級的保證，瀏覽器有義務把請求送完。剩下的風險很小而且刻意接受：keepalive 請求失敗就丟掉那一下點擊，卡片維持原狀態，等於沒點。
+計時器還沒到就離開頁面的情況，實測過：WebSocket 在導覽時就被拆掉，普通的 mutation 送不出去（點一下馬上重新載入 → 沒寫進去）。所以 `pagehide` / `visibilitychange` 的 flush 改走 Convex 的 HTTP mutation 端點並加上 `keepalive: true`——這是 `navigator.sendBeacon` 那一級的保證，瀏覽器有義務把請求送完。這條路徑自己組 request body，所以憑證也要自己帶：hook 收一個 `auth` 並用 ref 保存最新值，body 裡的 `args` 是 `{ auth, ticketId, status }`，跟正常的 mutation 一樣會過 `requireWrite`。剩下的風險很小而且刻意接受：keepalive 請求失敗就丟掉那一下點擊，卡片維持原狀態，等於沒點。
 
 ## 有新版本時的提示
 
 看板是那種「開著一整週不關」的頁面，所以部署了新版本要講出來，否則使用者會一直看著週一載入的那份 bundle。
 
-static-hosting component 自己記著「現在服務的是哪一次部署」，`convex/staticHosting.ts` 把它的 query re-export 成 `staticHosting:getCurrentDeployment`（**公開唯讀**，不是寫入端點）。前端的 `UpdateNotice` 用 component 提供的 `useDeploymentUpdates()` 訂閱它：hook 記住首次繪製時看到的 deployment id，只有在 id 改變時才回報有更新——所以正常開頁面不會跳提示，只有在你開著頁面時有人部署才會。提示可以按「重新載入」或關掉（關掉只針對這一次部署）。
+static-hosting component 自己記著「現在服務的是哪一次部署」，`convex/staticHosting.ts` 把它的 query re-export 成 `staticHosting:getCurrentDeployment`（**唯讀，而且是唯一不收憑證的公開函式**——它只講部署資訊，且登入頁也要能提示更新）。前端的 `UpdateNotice` 用 component 提供的 `useDeploymentUpdates()` 訂閱它：hook 記住首次繪製時看到的 deployment id，只有在 id 改變時才回報有更新——所以正常開頁面不會跳提示，只有在你開著頁面時有人部署才會。提示可以按「重新載入」或關掉（關掉只針對這一次部署）。
 
 提示條是自己做的，不是 component 內建的 `UpdateBanner`：內建那個帶自己的 inline style 與英文文案。自製的版本長得像看板的其他元件，而且定位在 `<main>` 上（`absolute`），所以不需要知道 header 有多高，也不會和底部的拖曳暫存區疊在一起。

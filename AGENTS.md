@@ -3,8 +3,9 @@
 Epic × Checkpoint 看板：Epic 為欄、週 checkpoint 為列的矩陣看板。前端 React +
 TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex。
 資料由匯入腳本寫入，不回寫 Jira；看板本身也能編輯（拖曳換週次／排序、新增、
-修改、刪除、點燈號換狀態，都走 `board:*` 公開 mutation、無認證），但 payload
-仍是事實來源——重新匯入會蓋回 payload 的值。
+修改、刪除、點燈號換狀態，都走 `board:*` mutation），但 payload 仍是事實來源
+——重新匯入會蓋回 payload 的值。看板前面有帳號密碼登入：讀要 `permRead`、
+寫要 `permWrite`，註冊要有人審核（見下方慣例與 `docs/data-model.md`）。
 
 ## 常用指令
 
@@ -54,6 +55,7 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 更新看板資料、payload 格式 | `.claude/skills/jira-board-import/references/updating-board-data.md` |
 | 動 schema 或狀態燈號 | `docs/data-model.md` |
 | 改前端（lazy loading、版面）或找檔案 | `docs/architecture.md` |
+| 開帳號、給／收權限、看登入怎麼運作 | `docs/data-model.md` 的「登入與權限」 |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
 
@@ -84,13 +86,19 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   不要在 payload 裡硬塞 `status` 繞過去；匯入失敗是刻意設計。
 - **checkpoint 列順序由日期推導**，`convex/board.ts` 會忽略 payload 的
   `order`——看到「列排錯」先想到這裡，不是 bug。
-- **看板的公開寫入面是 `convex/board.ts` 裡的 `board:*` mutation，全部沒有認證。**
-  目前是 `moveTicket`（換週次）、`reorderCell`（同格內排序）、`createTicket`、
-  `updateTicket`、`deleteTicket`。使用者要求直接在看板上編輯，這是刻意接受的取捨
-  ——也因此每個 handler 都要跟匯入一樣嚴格驗證（標題非空、ISO 日期、PR 網址、key
-  唯一、epic 護欄），共用的檢查住在 `convex/validation.ts`。**匯入與設定函式一律
-  留在 internal**（`convex/data.ts`，含 `importBoard` / `setConfig`）。要再加公開
-  mutation 前先想清楚：任何人打開網站就能呼叫它。
+- **每個公開函式都自己檢查權限，`convex/auth.ts` 是唯一的關口。** 前端把
+  `{ account, tokenHash }`（`tokenHash = sha256("kanban:<account>:<password>")`，
+  在瀏覽器用 Web Crypto 算）當 `auth` 參數送進每一次呼叫；handler 第一行就是
+  `requireRead` / `requireWrite` / `requirePermission(..., "permApproveRegister")`。
+  讀（`board:get`）要 `permRead`，寫（`board:moveTicket` / `reorderCell` /
+  `createTicket` / `updateTicket` / `deleteTicket`）要 `permWrite`；唯一不收憑證的
+  是 `staticHosting:getCurrentDeployment`（只有部署資訊，登入頁也要能提示更新）。
+  **認證過不等於可信任**，欄位驗證照樣要跟匯入一樣嚴（標題非空、ISO 日期、PR
+  網址、key 唯一、epic 護欄），共用的檢查住在 `convex/validation.ts`。
+  **匯入、設定與帳號管理一律留在 internal**（`convex/data.ts` 的 `importBoard` /
+  `setConfig`，`convex/auth.ts` 的 `seedUser` / `deleteUser` / `listUsers`）；
+  `approve` 只會給 `permRead`，`permWrite` 與 `permApproveRegister` 只能從終端機
+  用 `seedUser` 給，UI 沒有這條路。要再加公開函式前先想清楚它要哪個權限。
 - **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
   要換欄位或改 key 就改 payload 重新匯入。
 - **Jira 站台網址與負責人顏色住在 Convex 的 `config` 表**，不寫在程式裡；用
