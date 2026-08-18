@@ -1,6 +1,6 @@
 # 當前進度
 
-_更新於 2026-08-14。_
+_更新於 2026-08-18。_
 
 ## 已完成
 
@@ -32,16 +32,22 @@ _更新於 2026-08-14。_
   補送，不會因為導覽把最後一下弄丟。
 - 部署新版本時，開著看板的頁面會跳出「看板有新版本」提示，可以直接重新載入
   （靠 static-hosting component 的 deployment query，不會在初次載入時誤跳）
+- **帳號密碼登入與權限控管**：`users` 表存 `sha256("kanban:<account>:<password>")`
+  （hash 在瀏覽器用 Web Crypto 算，明文密碼不離開瀏覽器），前端把
+  `{ account, tokenHash }` 當 `auth` 參數送進每一次呼叫，`convex/auth.ts` 是唯一
+  的關口：讀要 `permRead`、寫要 `permWrite`。註冊是公開的，但新帳號三個權限都是
+  false，要有 `permApproveRegister` 的人從 header 的鈴鐺（有人在等就亮紅點）按
+  通過才拿到讀取權；`permWrite` 只能用 internal 的 `auth:seedUser` 給。
+  `permWrite=false` 的人看到唯讀看板（沒有「+」、不能拖、燈號不可點）。
+  刻意不做的：改密碼、session 到期、撤銷 token——見 data-model.md 的取捨說明。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`）
 - Convex 靜態託管部署（production / dev 兩個 deployment）
 
 ## 尚未實作
 
-- 權限控管——看板可以直接編輯之後這件事更重要了：`convex/board.ts` 的
-  `moveTicket` / `reorderCell` / `createTicket` / `updateTicket` / `deleteTicket`
-  **全部沒有認證**，任何打得開網站的人都能改、能刪。這是使用者要求「直接在看板
-  上編輯」時刻意接受的取捨；要對外開放就得從這幾個 handler 加檢查。
+- 帳號自助管理（改密碼、忘記密碼、撤銷）——現在只能由管理者用 internal 的
+  `auth:seedUser` / `auth:deleteUser` 處理
 - 回寫 Jira（看板上的修改只留在 Convex，完整重新匯入會被 payload 蓋掉）
 - 換卡片的 Epic（刻意不做，見 data-model.md）
 - Jira 同步自動化（目前由 Agent 依 skill 手動執行）

@@ -1,5 +1,6 @@
 import { LayoutGrid, RotateCcw, Search } from "lucide-react";
 
+import { AccountBar } from "@/components/AccountBar";
 import {
   MultiSelectFilter,
   type FilterOption,
@@ -60,13 +61,19 @@ export function BoardHeader({
 
   return (
     <header className="h-[105px] shrink-0 border-b border-slate-200 bg-white">
-      <div className={TIER}>
-        <div className="rounded-lg bg-indigo-600 p-1.5 text-white shadow-sm">
-          <LayoutGrid className="size-[18px]" aria-hidden />
+      <div className={`${TIER} justify-between`}>
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="rounded-lg bg-indigo-600 p-1.5 text-white shadow-sm">
+            <LayoutGrid className="size-[18px]" aria-hidden />
+          </div>
+          <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">
+            Epic × Checkpoint 看板
+          </h1>
         </div>
-        <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">
-          Epic × Checkpoint 看板
-        </h1>
+
+        {/* Reads the session from context rather than taking props: the account
+            bar is about who is looking at the board, not about the board. */}
+        <AccountBar />
       </div>
 
       <div className="mx-6 border-t border-slate-100" />

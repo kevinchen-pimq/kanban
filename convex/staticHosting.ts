@@ -8,8 +8,10 @@ import { components } from "./_generated/api";
  * makes it reachable from the browser, so an already-open tab can notice that a
  * newer bundle has been uploaded (see `src/components/UpdateNotice.tsx`).
  *
- * A public query, not a write: it only reads the component's own deployment
- * record, so the board still has exactly one public mutation.
+ * The one function that takes no credentials, on purpose: it returns deployment
+ * metadata rather than board data, and the update notice has to work on the login
+ * screen too — a tab left open across a deploy should be told to reload whether
+ * or not anyone is signed in on it.
  */
 export const { getCurrentDeployment } = exposeDeploymentQuery(
   components.staticHosting,

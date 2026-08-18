@@ -1,6 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+import { useBoardActions } from "@/components/BoardActionsProvider";
 import { TicketCard } from "@/components/TicketCard";
 import type { Ticket } from "@/lib/board";
 import type { TicketDragData } from "@/lib/dnd";
@@ -26,14 +27,18 @@ export function DraggableTicket({
   ticket: Ticket;
   today: string;
 }) {
+  const { canWrite } = useBoardActions();
   const data: TicketDragData = {
     ticketId: ticket._id,
     epicId: ticket.epicId,
     checkpointId: ticket.checkpointId,
     from: "cell",
   };
+  // A read-only account keeps the sortable registration (so the cell still
+  // measures the same) but not the drag: `disabled` drops the listeners, and the
+  // grab cursor goes with them.
   const { setNodeRef, attributes, listeners, isDragging, transform, transition } =
-    useSortable({ id: ticket._id, data });
+    useSortable({ id: ticket._id, data, disabled: !canWrite });
 
   return (
     // touch-none: without it a touch drag scrolls the board instead of moving
@@ -44,7 +49,8 @@ export function DraggableTicket({
       {...attributes}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        "touch-none rounded-xl cursor-grab active:cursor-grabbing",
+        "touch-none rounded-xl",
+        canWrite && "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-40",
       )}
     >
