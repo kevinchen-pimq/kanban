@@ -58,11 +58,11 @@ A ticket's row is **the week the work actually finished**, in three tiers:
 **Tier 1 — the week it was cut to Dev Done.** Sweep week windows with JQL:
 
 ```
-parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<tue>", "<next tue>")
+parent = <EPIC-KEY> AND status CHANGED TO "Dev Done" DURING ("<sun>", "<next sun>")
 ```
 
 Generate windows with `npm run week -- --windows <from> <to>` — never count
-Tuesdays by hand (a real off-by-one week happened that way). Bound the sweep
+week starts by hand (a real off-by-one week happened that way). Bound the sweep
 with cheap count-mode queries first, and check one window before your range is
 empty. A ticket matching several windows takes the **last** one (it was pushed
 back and re-cut). A window with >5 matches needs the `NOT IN` trick again.
@@ -78,7 +78,7 @@ deliberately does not send to Convex.
 work. A backlog row full of *closed* tickets means tier 2 was skipped.
 
 Convert dates with `npm run week -- <date>` and generate payload entries with
-`npm run week -- --checkpoints <lo> <hi>`. Weeks run Tuesday–Monday with the
+`npm run week -- --checkpoints <lo> <hi>`. Weeks run Sunday–Saturday with the
 team's own numbering (not ISO). Declare **every** week between the earliest
 and latest in use, including empty ones — gaps are real weeks.
 

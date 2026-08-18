@@ -10,6 +10,8 @@
 
 import type * as board from "../board.js";
 import type * as data from "../data.js";
+import type * as staticHosting from "../staticHosting.js";
+import type * as validation from "../validation.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +22,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   board: typeof board;
   data: typeof data;
+  staticHosting: typeof staticHosting;
+  validation: typeof validation;
 }>;
 
 /**

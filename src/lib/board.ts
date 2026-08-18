@@ -4,6 +4,8 @@ import { formatMonthDay, isBefore } from "./dates";
 export type Epic = Doc<"epics">;
 export type Checkpoint = Doc<"checkpoints">;
 export type Ticket = Doc<"tickets">;
+/** Board-wide settings; see `convex/schema.ts` and `data:setConfig`. */
+export type BoardConfig = Doc<"config">;
 export type TicketStatus = Ticket["status"];
 
 /** Order the status filter and legend are presented in. */
@@ -154,6 +156,23 @@ export function isOverdue(ticket: Ticket, today: string): boolean {
   return isBefore(ticket.dueDate, today);
 }
 
+/**
+ * Order the cards of one cell top to bottom.
+ *
+ * `order` is what dragging cards around within a cell writes, so it wins when it
+ * is there. Cards that have never been arranged by hand — everything an import
+ * created — have no `order` and keep the order they were created in, which is
+ * how the board looked before ordering existed.
+ */
+export function sortCellTickets(tickets: readonly Ticket[]): Ticket[] {
+  return [...tickets].sort((a, b) => {
+    if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
+    if (a.order !== undefined) return -1;
+    if (b.order !== undefined) return 1;
+    return a._creationTime - b._creationTime;
+  });
+}
+
 /** Case-insensitive match against the ticket key and title, as in the PoC. */
 export function matchesSearch(ticket: Ticket, search: string): boolean {
   if (!search) return true;
@@ -162,12 +181,4 @@ export function matchesSearch(ticket: Ticket, search: string): boolean {
     ticket.key.toLowerCase().includes(needle) ||
     ticket.title.toLowerCase().includes(needle)
   );
-}
-
-/** Initials for the assignee avatar, e.g. "KC". */
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
