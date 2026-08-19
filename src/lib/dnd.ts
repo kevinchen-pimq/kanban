@@ -8,6 +8,7 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, hasSortableData } from "@dnd-kit/sortable";
 
+import type { TicketId } from "@/lib/board";
 import type { Id } from "../../convex/_generated/dataModel";
 
 /**
@@ -19,7 +20,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 
 /** Travels with a dragged card. `from` says whether it started in the tray. */
 export type TicketDragData = {
-  ticketId: Id<"tickets">;
+  ticketId: TicketId;
   /** The card's epic. A move may not change it, so drops elsewhere fail. */
   epicId: Id<"epics">;
   /** The cell the card is in; absent while it waits in the tray. */
@@ -92,7 +93,7 @@ export function resolveDropTarget(over: Over | null): DropTarget {
 export function reorderedCell(
   active: Active,
   over: Over,
-): Id<"tickets">[] | null {
+): TicketId[] | null {
   if (!hasSortableData(active) || !hasSortableData(over)) return null;
 
   const { items, index: from } = active.data.current.sortable;
@@ -102,7 +103,7 @@ export function reorderedCell(
     return null; // a different cell's list: this is a move, not a reorder
   }
 
-  return arrayMove(items, from, to) as Id<"tickets">[];
+  return arrayMove(items, from, to) as TicketId[];
 }
 
 /** Cards register as droppables too; only they carry a `ticketId`. */

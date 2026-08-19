@@ -2,8 +2,12 @@ import { getConvexUrl } from "@convex-dev/static-hosting";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Credentials } from "@/lib/auth";
-import { STATUS_ORDER, type Ticket, type TicketStatus } from "@/lib/board";
-import type { Id } from "../../convex/_generated/dataModel";
+import {
+  STATUS_ORDER,
+  type Ticket,
+  type TicketId,
+  type TicketStatus,
+} from "@/lib/board";
 
 /** How long the clicking has to stop before the status is written. */
 const DEBOUNCE_MS = 1000;
@@ -40,7 +44,7 @@ export function nextStatus(status: TicketStatus): TicketStatus {
  * status it had, which is the same outcome as never having clicked.
  */
 export function useStatusCycle(
-  save: (ticketId: Id<"tickets">, status: TicketStatus) => Promise<unknown>,
+  save: (ticketId: TicketId, status: TicketStatus) => Promise<unknown>,
   /**
    * The signed-in credential pair. The normal write carries it through `save`,
    * but the teardown flush builds its own request body, so it needs the pair
@@ -50,18 +54,18 @@ export function useStatusCycle(
   auth: Credentials,
 ) {
   const [pending, setPending] = useState<
-    ReadonlyMap<Id<"tickets">, TicketStatus>
+    ReadonlyMap<TicketId, TicketStatus>
   >(new Map());
 
   // Refs so the flush path never depends on a re-render having happened.
-  const timers = useRef(new Map<Id<"tickets">, ReturnType<typeof setTimeout>>());
-  const latest = useRef(new Map<Id<"tickets">, TicketStatus>());
+  const timers = useRef(new Map<TicketId, ReturnType<typeof setTimeout>>());
+  const latest = useRef(new Map<TicketId, TicketStatus>());
   const saveRef = useRef(save);
   saveRef.current = save;
   const authRef = useRef(auth);
   authRef.current = auth;
 
-  const send = useCallback((ticketId: Id<"tickets">) => {
+  const send = useCallback((ticketId: TicketId) => {
     const armed = timers.current.get(ticketId);
     if (armed) clearTimeout(armed);
     timers.current.delete(ticketId);

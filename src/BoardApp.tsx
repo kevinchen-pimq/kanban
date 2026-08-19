@@ -42,7 +42,12 @@ import {
 } from "@/components/TicketDialog";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { matchesSearch, type Ticket, type TicketStatus } from "@/lib/board";
+import {
+  matchesSearch,
+  type Ticket,
+  type TicketId,
+  type TicketStatus,
+} from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
 import { loadFilters, saveFilters } from "@/lib/filters";
 import {
@@ -102,7 +107,11 @@ const AUTO_SCROLL = {
  * rather than leaving `board:get` throwing inside it.
  */
 export function BoardApp() {
-  const { credentials: auth, canWrite } = useSession();
+  const { credentials: auth, canWrite, canRequest } = useSession();
+  // Every affordance is offered to both, and every call is the same call; the
+  // server turns it into a pending edit request when the account may only propose.
+  const canEdit = canWrite || canRequest;
+  const requestMode = canRequest && !canWrite;
   const today = useMemo(() => todayIso(), []);
   const [fromDate, setFromDate] = useState(() =>
     weeksBefore(todayIso(), INITIAL_WEEKS),
@@ -168,6 +177,7 @@ export function BoardApp() {
   const createTicket = useMutation(api.board.createTicket);
   const updateTicket = useMutation(api.board.updateTicket);
   const deleteTicket = useMutation(api.board.deleteTicket);
+  const withdrawRequest = useMutation(api.editRequests.withdraw);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Distance from the bottom, captured before older rows are prepended.
@@ -336,7 +346,7 @@ export function BoardApp() {
   // Cards lifted into the staging tray, oldest first. Client-side only: parking
   // a card writes nothing, it just takes the card out of the matrix until it is
   // dropped somewhere. Ids rather than documents, so the cards stay reactive.
-  const [parkedIds, setParkedIds] = useState<readonly Id<"tickets">[]>([]);
+  const [parkedIds, setParkedIds] = useState<readonly TicketId[]>([]);
   const [dragged, setDragged] = useState<Ticket | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [editing, setEditing] = useState<TicketTarget | null>(null);
@@ -347,7 +357,7 @@ export function BoardApp() {
   const lastDragEnd = useRef(0);
 
   const ticketsById = useMemo(() => {
-    const map = new Map<Id<"tickets">, Ticket>();
+    const map = new Map<TicketId, Ticket>();
     for (const ticket of withPendingStatus(board?.tickets ?? [])) {
       map.set(ticket._id, ticket);
     }
@@ -478,9 +488,22 @@ export function BoardApp() {
       },
       cycleStatus,
       checkpoints: board?.checkpoints ?? [],
-      canWrite,
+      canEdit,
+      requestMode,
+      withdrawRequest: async (ticket) => {
+        const requestId = ticket.pendingEdit?.requestId;
+        if (requestId) await withdrawRequest({ auth, requestId });
+      },
     }),
-    [board?.checkpoints, canWrite, cycleStatus, epicsById],
+    [
+      auth,
+      board?.checkpoints,
+      canEdit,
+      cycleStatus,
+      epicsById,
+      requestMode,
+      withdrawRequest,
+    ],
   );
 
   // The form hands back strings; the mutations take the typed shape, with null
@@ -650,12 +673,16 @@ export function BoardApp() {
               .map((option) => option.value)
               .filter((name): name is string => name !== null)}
             today={today}
+            requestMode={requestMode}
             onClose={() => setEditing(null)}
             onSubmit={(values) => submitTicket(editing, values)}
             onDelete={async () => {
               if (editing.mode === "edit") {
                 await deleteTicket({ auth, ticketId: editing.ticket._id });
               }
+            }}
+            onWithdraw={async () => {
+              if (editing.mode === "edit") await actions.withdrawRequest(editing.ticket);
             }}
           />
         )}

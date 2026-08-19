@@ -1,4 +1,4 @@
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -91,18 +91,28 @@ export function TicketDialog({
   checkpoints,
   assigneeSuggestions,
   today,
+  requestMode,
   onClose,
   onSubmit,
   onDelete,
+  onWithdraw,
 }: {
   target: TicketTarget;
   checkpoints: readonly Checkpoint[];
   /** Names already on the board, offered as autocomplete. */
   assigneeSuggestions: readonly string[];
   today: string;
+  /**
+   * True when this account proposes edits instead of making them
+   * (`permEditRequest` without `permWrite`). Only the wording changes: the same
+   * mutation is called either way, and the server decides what it means.
+   */
+  requestMode: boolean;
   onClose: () => void;
   onSubmit: (values: TicketFormValues) => Promise<void>;
   onDelete: () => Promise<void>;
+  /** Drop the pending request on this card, restoring what the board really says. */
+  onWithdraw: () => Promise<void>;
 }) {
   const [values, setValues] = useState(() => initialValues(target));
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +127,7 @@ export function TicketDialog({
   const rows = describeCheckpoints(checkpoints, today);
   const creating = target.mode === "create";
   const titleMissing = values.title.trim() === "";
+  const pending = target.mode === "edit" ? target.ticket.pendingEdit : undefined;
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -136,12 +147,22 @@ export function TicketDialog({
     <Dialog open onOpenChange={(next) => !next && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{creating ? "新增卡片" : "編輯卡片"}</DialogTitle>
+          <DialogTitle>
+            {requestMode
+              ? creating
+                ? "提議新增卡片"
+                : "提議修改卡片"
+              : creating
+                ? "新增卡片"
+                : "編輯卡片"}
+          </DialogTitle>
           <DialogDescription>
             {target.epicName}
             {creating
               ? " · 手動建立的卡片在下一次完整重新匯入（pruneEpics）時會被刪除,payload 才是事實來源。"
               : " · Epic 與 Key 不能修改。"}
+            {requestMode &&
+              " 你的修改會先送去審核,通過之後才會出現在其他人的看板上。"}
           </DialogDescription>
         </DialogHeader>
 
@@ -290,11 +311,29 @@ export function TicketDialog({
           )}
 
           <DialogFooter>
-            <div>
+            <div className="flex items-center gap-2">
+              {/* The way back out of a proposal, on the card it is about. The
+                  bell's 我的提議 list carries the same button for requests whose
+                  card is not on screen — a proposed deletion, for one. */}
+              {pending && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void run(onWithdraw)}
+                  className="h-7 gap-1.5 border-amber-300 px-2 text-xs text-amber-800 hover:bg-amber-50"
+                >
+                  <Undo2 className="size-3" aria-hidden />
+                  撤回提議
+                </Button>
+              )}
               {!creating &&
                 (confirmingDelete ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-rose-600">確定刪除?</span>
+                    <span className="text-[11px] text-rose-600">
+                      {requestMode ? "確定提議刪除?" : "確定刪除?"}
+                    </span>
                     <Button
                       type="button"
                       size="sm"
@@ -345,7 +384,13 @@ export function TicketDialog({
                 className="h-7 gap-1.5 bg-indigo-600 px-3 text-xs hover:bg-indigo-700"
               >
                 {busy && <Loader2 className="size-3 animate-spin" aria-hidden />}
-                {creating ? "建立" : "儲存"}
+                {requestMode
+                  ? creating
+                    ? "提議新增"
+                    : "提議修改"
+                  : creating
+                    ? "建立"
+                    : "儲存"}
               </Button>
             </div>
           </DialogFooter>

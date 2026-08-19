@@ -38,8 +38,17 @@ _更新於 2026-08-18。_
   的關口：讀要 `permRead`、寫要 `permWrite`。註冊是公開的，但新帳號三個權限都是
   false，要有 `permApproveRegister` 的人從 header 的鈴鐺（有人在等就亮紅點）按
   通過才拿到讀取權；`permWrite` 只能用 internal 的 `auth:seedUser` 給。
-  `permWrite=false` 的人看到唯讀看板（沒有「+」、不能拖、燈號不可點）。
+  沒有編輯權也沒有提議權的人看到唯讀看板（沒有「+」、不能拖、燈號不可點）。
   刻意不做的：改密碼、session 到期、撤銷 token——見 data-model.md 的取捨說明。
+- **提議編輯（`permEditRequest`）**：有這個權限但沒有 `permWrite` 的帳號拿到完整的
+  編輯介面（拖曳換週次／排序、新增、修改、刪除、點燈號），但每個動作寫進
+  `editRequests` 而不是看板。`board:get` 會把提議者自己的待審提議疊在真實資料上
+  （新增的出現、刪除的消失、改動照提議顯示，卡片帶「待審…」badge），所以重新
+  整理不會掉，別人也完全看不到。同一張卡的多次操作會**合併成一筆**（規則見
+  data-model.md），提議者可以自己撤回。有 `permWrite` 的人在鈴鐺裡看到待審編輯，
+  每一列直接攤開 diff，按「核准」走的是跟直接寫入完全同一條路徑（`convex/apply.ts`），
+  核准會重新驗證、失敗時把原因給審核者並保留該筆讓他改按「忽略」。權限只能用
+  internal 的 `auth:seedUser` 給，註冊審核通過仍然只給 `permRead`。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`）
 - Convex 靜態託管部署（production / dev 兩個 deployment）

@@ -1,12 +1,13 @@
 # 資料模型
 
-`convex/schema.ts` 五張表——三張是看板資料，一張設定，一張使用者：
+`convex/schema.ts` 六張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關：
 
 - **`epics`** — X 軸的欄。`code`（如 `DEMO-BOARD`）、`name`、`accent` 顏色鍵、`order` 決定左右順序。
 - **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`；週別存 `weekNumber` 與 `startDate`/`endDate`（ISO 日期字串）。**列的順序由日期推導**，不看 payload 給的 `order`——週次有真實日期，從日期排就不可能因為匯入時 `order` 給錯而排亂（這個錯踩過一次）。backlog 永遠在最後。
 - **`tickets`** — 卡片。以 `epicId` + `checkpointId` 決定落在哪一格，`status` 是四個燈號之一。`assignee` / `dueDate` / `githubPrs` / `tag` 皆為選填。
 - **`config`** — 看板設定，只有一筆文件（讀取時取第一筆）。存 `jiraBaseUrl` 與 `assigneeColors`，見下方。
-- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與三個獨立的布林權限，見「登入與權限」。
+- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與四個獨立的布林權限，見「登入與權限」。
+- **`editRequests`** — 還沒被審核的編輯提議，一筆對應一張卡（或一格的排序）。只有 `permEditRequest` 的人做的編輯會落在這裡，見「編輯提議」。
 
 ## 狀態燈號
 
@@ -58,8 +59,11 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 | `account` | 帳號名稱，唯一。存進來之前一律 `trim().toLowerCase()`，長度 3–32、只收英數字與 `.` `-` `_`（`convex/auth.ts` 的 `cleanAccount`） |
 | `tokenHash` | `sha256("kanban:<account>:<password>")` 的 64 位小寫十六進位字串 |
 | `permRead` | 能不能讀看板。**false 就是「註冊了，還沒過審」** |
-| `permWrite` | 能不能編輯（拖曳、新增、修改、刪除、點燈號） |
+| `permWrite` | 能不能編輯（拖曳、新增、修改、刪除、點燈號），也代表能審核別人的編輯提議 |
+| `permEditRequest` | 能不能**提議**編輯。選填欄位——在這個功能之前建立的帳號沒有它，讀不到就當 false |
 | `permApproveRegister` | 能不能看到並處理待審註冊 |
+
+四個權限彼此獨立，任何組合都成立。只有 `permRead` 是唯讀；`permRead + permEditRequest` 看到完整的編輯介面，但每個動作變成一筆待審的提議（見下面的 `editRequests`）；`permWrite` 直接寫入，永遠不會產生提議。兩個都有的時候 `permWrite` 贏。
 
 **密碼永遠不離開瀏覽器。** hash 在前端用 Web Crypto（`crypto.subtle.digest`）算（`src/lib/auth.ts` 的 `computeTokenHash`），只有 hash 會被送出、存進 `users`、寫進 localStorage 的 `kanban.auth.v1`。所以後端沒有任何地方看得到、存得到或 log 得到明文密碼。帳號名稱是 hash 的一部分，所以正規化必須兩邊一致——前端在 hash 之前先做，後端用同一條規則再做一次。
 
@@ -72,6 +76,7 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 ```
 requireRead(ctx, auth)                          → permRead，否則丟 AUTH_DENIED
 requireWrite(ctx, auth)                         → permWrite
+requireEdit(ctx, auth)                          → permWrite 或 permEditRequest（回 user，讓 handler 自己分岔）
 requirePermission(ctx, auth, "permApproveRegister")
 ```
 
@@ -81,16 +86,16 @@ requirePermission(ctx, auth, "permApproveRegister")
 
 | 函式 | 型別 | 需要的權限 | 做什麼 |
 | --- | --- | --- | --- |
-| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permApproveRegister`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢 |
-| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，三個權限**全部 false**；帳號重複拒絕 |
+| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permEditRequest`、`permApproveRegister`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢 |
+| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，四個權限**全部 false**；帳號重複拒絕 |
 | `auth:pendingUsers` | query | `permApproveRegister` | 待審帳號（`permRead=false`），最舊的在前 |
 | `auth:approve` | mutation | `permApproveRegister` | **只設 `permRead=true`**，不會給其他權限 |
 | `auth:dismiss` | mutation | `permApproveRegister` | 刪掉那筆註冊，名字就釋放出來。已經過審的帳號拒絕刪（誤點鈴鐺不該砍掉在用的帳號） |
-| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，三個權限都自己指定。第一個管理員從這裡進來 |
-| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑 |
+| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，四個權限都自己指定（`permEditRequest` 選填，不給就是 false）。第一個管理員從這裡進來 |
+| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議 |
 | `auth:listUsers` | **internal** | — | 列出帳號與權限（不回 hash） |
 
-`permWrite` 與 `permApproveRegister` **只能從終端機給**，瀏覽器沒有任何路徑能把自己或別人升權：
+`permWrite`、`permEditRequest` 與 `permApproveRegister` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
 
 ```bash
 # hash 要在外面算：sha256("kanban:<account>:<password>")
@@ -98,6 +103,9 @@ node -e 'console.log(require("crypto").createHash("sha256").update("kanban:someo
 
 npx convex run auth:seedUser '{"account":"someone","tokenHash":"<64 hex>",
   "permRead":true,"permWrite":true,"permApproveRegister":true}'
+# 只給提議編輯的人：
+npx convex run auth:seedUser '{"account":"someone","tokenHash":"<64 hex>",
+  "permRead":true,"permEditRequest":true}'
 npx convex run auth:listUsers
 npx convex run auth:deleteUser '{"account":"someone"}'
 npx convex run auth:seedUser ... --prod   # 對 production
@@ -107,11 +115,13 @@ npx convex run auth:seedUser ... --prod   # 對 production
 
 `AuthProvider`（`src/components/AuthProvider.tsx`）訂閱 `auth:login`，所以帳號被刪、密碼被改、權限被調整都會即時反映：`loading`（正在驗證存下來的憑證）、`anonymous`（登入／註冊畫面）、`pending`（等待審核的等候室）、`authenticated`（看板）。**看板只在 `authenticated` 掛載**——`board:get` 對壞憑證是丟錯的，而丟錯的 query 會把整頁帶走；讓看板在同一次 render 卸載，錯誤就不會浮出來。
 
-`permWrite=false` 的人看到的是唯讀看板：格子的「+」、卡片的點擊編輯、狀態燈號按鈕與拖曳都不會出現（`BoardActions.canWrite`）。**這只是不給誤導性的 affordance，不是防線**——防線在後端每個 handler 的 `requireWrite`。
+`permWrite` 與 `permEditRequest` 都沒有的人看到的是唯讀看板：格子的「+」、卡片的點擊編輯、狀態燈號按鈕與拖曳都不會出現（`BoardActions.canEdit`）。**這只是不給誤導性的 affordance，不是防線**——防線在後端每個 handler 的 `requireWrite` / `requireEdit`。
+
+`permEditRequest` 的人拿到的是**同一套**介面（同樣的拖曳、同樣的 modal、同樣的燈號），只有文案改成「提議…」，呼叫的 mutation 一模一樣——要不要當成提議是後端決定的。
 
 ## 公開的寫入面：`convex/board.ts` 的 `board:*`
 
-看板可以直接編輯，所以對外開放的 mutation 不只一個。全部住在 `convex/board.ts`，**每一個都收 `auth` 並要求 `permWrite`**：
+看板可以直接編輯，所以對外開放的 mutation 不只一個。全部住在 `convex/board.ts`，**每一個都收 `auth` 並要求 `permWrite` 或 `permEditRequest`**（`requireEdit`）：有 `permWrite` 就直接寫入，只有 `permEditRequest` 就變成一筆待審的提議。護欄與欄位驗證兩條路完全一樣。
 
 | Mutation | 做什麼 | 護欄 |
 | --- | --- | --- |
@@ -121,7 +131,7 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `updateTicket` | 改標題／狀態／週次／負責人／日期／標籤／PR | 同上的欄位檢查；**不收 `epicId` 與 `key`**，所以改不動 |
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite`）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
@@ -141,3 +151,52 @@ npx convex run auth:seedUser ... --prod   # 對 production
 - 只要有卡片被放進某一格（`moveTicket` / `createTicket` / `updateTicket` 換週次），那一格會順手被編號 0..n-1，**而且維持當下看到的順序**——不編號的話，新卡片拿到 `max(order)+1` 反而會排在那些「沒有 order」的卡片前面，看起來就不是落在最後。沒人動過的格子不會被編號。
 - `reorderCell` 一次寫入整格的順序（前端送完整的 id 陣列），所以重放同一個請求結果一樣。拖曳過程中卡片的位移是 dnd-kit 的 transform，放手才寫一次。
 - **匯入不動 `order`**：`importBoard` 寫入的欄位裡沒有它，所以手動排過的順序在之後的補充匯入後還在。新匯入的卡片沒有 `order`，排在該格已排序卡片的後面。
+
+## 編輯提議（`editRequests` 表）
+
+`permEditRequest` 但沒有 `permWrite` 的帳號按下的每一個編輯動作，都變成這張表裡的一列。**沒有歷史、沒有 audit log**：一筆提議只有「還在等」這一個狀態，核准、忽略、撤回三條路都是把它刪掉。
+
+| 欄位 | 內容 |
+| --- | --- |
+| `requestedBy` / `account` | 提議者。`account` 是複本，讓審核清單不用一筆一筆回頭讀 `users` |
+| `kind` | `create` / `update` / `delete` / `reorder` |
+| `ticketId` | 目標卡片（`update`、`delete`） |
+| `epicId` / `checkpointId` | 目標格子（`create` 落在哪裡、`reorder` 排哪一格） |
+| `fields` | 要求的內容。`create` 放整張卡，`update` 只放改動的欄位（`null` 代表清空） |
+| `before` | **第一次**碰這張卡時它長什麼樣——diff 的左邊。`create` 與 `reorder` 沒有 |
+| `ticketIds` | `reorder` 要求的整格順序 |
+
+索引只有 `by_requester`：疊加要讀「我的」，合併也要讀「我的」。審核清單直接 `take(500)` 全表，這張表天生是短的。
+
+### 一張卡最多一筆提議：合併
+
+同一張卡再被動一次不會長出第二列，而是併進原本那一列（`mergeChange`）：
+
+| 已經有的 | 又做了 | 結果 |
+| --- | --- | --- |
+| `create` | 修改 | 一筆 `create`，欄位是最後的樣子 |
+| `update` | 修改 | 一筆 `update`，欄位合併；`before` 保持第一次的值，所以 diff 永遠是「原本 → 最後」 |
+| `update` | 換週次 | 同一筆 `update`（週次就是 `checkpointId` 這個欄位） |
+| 任何 | 刪除 | 變成一筆 `delete` |
+| `create` | 刪除 | 整筆消失（本來就還不存在） |
+| 任何 | 改回原值 | 那個欄位從提議裡移除；沒有欄位剩下時整筆消失 |
+
+`reorder` 是格子層級的，一格一筆，最後一次的排列覆蓋前一次。**不同人的提議永遠不合併**——合併只在同一個 `requestedBy` 的列之間發生。
+
+### 提議者看到的是自己的提議
+
+`board:get` 在回傳之前，把呼叫者自己還沒被審核的提議疊在真實資料上（`overlayTickets`）：新增的卡片出現、刪除的卡片消失、換週次與欄位改動照提議顯示，受影響的卡片帶一個 `pendingEdit` 標記（前端畫成「待審…」badge）。**別人看到的還是真實資料**，而且因為疊加在伺服器端做，重新整理不會掉。有 `permWrite` 的帳號沒有疊加——他們的寫入本來就是真的。
+
+一張還只是提議的新卡片沒有 `tickets` 的 id，所以它用**提議自己的 id** 當 `_id`；五個 `board:*` mutation 都收這種 id（`ticketRefValidator`），前端因此不需要為「還沒存在的卡片」分出第二條路。
+
+### 審核
+
+| 函式 | 型別 | 需要的權限 | 做什麼 |
+| --- | --- | --- | --- |
+| `editRequests:list` | query | `permWrite` | 所有待審提議，含 diff（誰、哪張卡、什麼變成什麼） |
+| `editRequests:mine` | query | `permEditRequest` | 自己的待審提議 |
+| `editRequests:withdraw` | mutation | `permEditRequest` | 撤回自己的（別人的丟 `AUTH_DENIED`） |
+| `editRequests:approve` | mutation | `permWrite` | 套用，然後刪掉那一列 |
+| `editRequests:dismiss` | mutation | `permWrite` | 直接刪掉，提議者的疊加隨即消失 |
+
+**核准走的是跟直接寫入完全同一條路**（`convex/apply.ts`），所以「被核准」和「有寫入權的人自己做」結果一致，護欄與欄位驗證也一模一樣。核准會**重新驗證**：卡片在等待期間被刪掉、epic 不對之類的情況會失敗，錯誤原因回給審核者，而且那一列**留著**讓他能改按「忽略」（mutation 失敗就整筆 rollback，這是免費的）。審核清單本身也會先提醒：目標卡片已經不在了的提議帶一行警告。

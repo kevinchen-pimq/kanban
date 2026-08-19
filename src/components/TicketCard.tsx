@@ -25,13 +25,22 @@ function keepPointerFromDrag(event: ReactPointerEvent) {
   event.stopPropagation();
 }
 
+/** What the badge on a card with a pending edit request says. */
+const PENDING_LABEL: Record<NonNullable<Ticket["pendingEdit"]>["kind"], string> = {
+  create: "待審新增",
+  update: "待審修改",
+  delete: "待審刪除",
+  reorder: "待審排序",
+};
+
 export function TicketCard({ ticket, today }: { ticket: Ticket; today: string }) {
   const status = STATUS_STYLES[ticket.status];
   const overdue = isOverdue(ticket, today);
   const prs = ticket.githubPrs ?? [];
-  const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0);
+  const pending = ticket.pendingEdit;
+  const hasMeta = Boolean(ticket.tag || ticket.dueDate || prs.length > 0 || pending);
   const jiraUrl = jiraIssueUrl(useBoardConfig()?.jiraBaseUrl, ticket.key);
-  const { openEdit, cycleStatus, canWrite } = useBoardActions();
+  const { openEdit, cycleStatus, canEdit } = useBoardActions();
 
   return (
     // Clicking anywhere that is not a control opens the card for editing. The
@@ -40,11 +49,14 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
     // account gets neither the handler nor the pointer cursor — the card is
     // something to read, and the links on it still work.
     <article
-      onClick={canWrite ? () => openEdit(ticket) : undefined}
+      onClick={canEdit ? () => openEdit(ticket) : undefined}
       className={cn(
         "flex flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:shadow-md",
-        canWrite && "cursor-pointer",
+        canEdit && "cursor-pointer",
         status.cardHover,
+        // A card the reader has a pending request for is theirs alone to see this
+        // way, so it is marked as a whole rather than only in its meta row.
+        pending && "border-dashed border-amber-300 bg-amber-50/40",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -57,7 +69,7 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
                 button: each click advances one status. The write is debounced
                 in `BoardApp`, so several clicks in a row cost one write. Without
                 write access it is just the dot, and says so. */}
-            {canWrite ? (
+            {canEdit ? (
               <button
                 type="button"
                 onClick={(event) => {
@@ -81,13 +93,23 @@ export function TicketCard({ ticket, today }: { ticket: Ticket; today: string })
           </TooltipTrigger>
           <TooltipContent>
             狀態: {status.label}
-            {canWrite && "（點一下切換）"}
+            {canEdit && "（點一下切換）"}
           </TooltipContent>
         </Tooltip>
       </div>
 
       {hasMeta && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          {/* Only the requester ever sees this: the card is showing their own
+              proposal, and the change is not on anybody else's board yet. */}
+          {pending && (
+            <span
+              title="這張卡片上有你提出、還在等待審核的修改；審核者按「核准」之後才會套用到看板上。"
+              className="rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+            >
+              {PENDING_LABEL[pending.kind]}
+            </span>
+          )}
           {ticket.tag && (
             <span className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
               {ticket.tag}

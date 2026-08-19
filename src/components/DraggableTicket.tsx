@@ -27,7 +27,7 @@ export function DraggableTicket({
   ticket: Ticket;
   today: string;
 }) {
-  const { canWrite } = useBoardActions();
+  const { canEdit } = useBoardActions();
   const data: TicketDragData = {
     ticketId: ticket._id,
     epicId: ticket.epicId,
@@ -38,7 +38,7 @@ export function DraggableTicket({
   // measures the same) but not the drag: `disabled` drops the listeners, and the
   // grab cursor goes with them.
   const { setNodeRef, attributes, listeners, isDragging, transform, transition } =
-    useSortable({ id: ticket._id, data, disabled: !canWrite });
+    useSortable({ id: ticket._id, data, disabled: !canEdit });
 
   return (
     // touch-none: without it a touch drag scrolls the board instead of moving
@@ -50,7 +50,7 @@ export function DraggableTicket({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
         "touch-none rounded-xl",
-        canWrite && "cursor-grab active:cursor-grabbing",
+        canEdit && "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-40",
       )}
     >

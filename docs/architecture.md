@@ -8,11 +8,15 @@ convex/
   board.ts           board:get — 依時間區間回傳看板（含 config）的單一 reactive query
                      board:moveTicket / reorderCell / createTicket / updateTicket /
                      deleteTicket — 看板的公開寫入面
-                     每個 handler 第一行是 requireRead / requireWrite
+                     每個 handler 第一行是 requireRead / requireEdit，寫入權直接套用、
+                     只有提議權就轉成 editRequests
+  apply.ts           所有對 tickets 的真實寫入（直接寫入與核准提議共用同一份）
+  editRequests.ts    編輯提議：合併寫入、board:get 的疊加、diff 描述，
+                     以及 list / mine / withdraw / approve / dismiss
   auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
-                     requirePermission、login / register / pendingUsers /
-                     approve / dismiss，以及 internal 的 seedUser / deleteUser /
-                     listUsers（見 data-model.md 的「登入與權限」）
+                     requireEdit / requirePermission、login / register /
+                     pendingUsers / approve / dismiss，以及 internal 的
+                     seedUser / deleteUser / listUsers（見 data-model.md）
   validation.ts      匯入與公開 mutation 共用的欄位檢查
   staticHosting.ts   re-export static-hosting component 的 deployment query
   data.ts            importBoard / removeEpics / removeTickets / summary — 維運入口
@@ -33,7 +37,8 @@ src/
   hooks/             useStatusCycle — 狀態燈號的點擊循環與 debounce
   components/        AuthProvider — 憑證的 context（訂閱 auth:login）
                      LoginScreen — 登入／註冊表單與等待審核的畫面
-                     AccountBar — header 右側：審核鈴鐺、帳號、唯讀徽章、登出
+                     AccountBar — header 右側：收件匣鈴鐺（註冊／待審編輯／我的提議）、
+                     帳號、唯讀或提議徽章、登出
                      BoardHeader / BoardMatrix / TicketCard / StatusDot
                      MultiSelectFilter — 狀態與負責人共用的多選下拉
                      AssigneeAvatar — 卡片與篩選選單共用的負責人頭像
@@ -61,9 +66,23 @@ docs/                本目錄：資料模型、專案結構、進度
 
 登入頁與等候室由 `FrontDoor` 包住，裡面放 `UpdateNotice`：`staticHosting:getCurrentDeployment` 是唯一不收憑證的 query，正是為了讓停在登入頁的分頁也能知道有新版本。
 
-`permWrite=false` 的人拿到唯讀看板。`canWrite` 搭現成的 `BoardActions` context 走，不另外拉一條 prop：格子的「+」不繪製，卡片不再 `cursor-pointer` 也不開表單，狀態燈號從 `<button>` 換成 `<span>`（帶 `aria-label`，讀者還是知道那是什麼顏色），`useSortable({ disabled })` 讓卡片拖不動。**這只是不給誤導性的 affordance**——真正的防線是後端每個 handler 的 `requireWrite`。
+既沒有 `permWrite` 也沒有 `permEditRequest` 的人拿到唯讀看板。`canEdit` 搭現成的 `BoardActions` context 走，不另外拉一條 prop：格子的「+」不繪製，卡片不再 `cursor-pointer` 也不開表單，狀態燈號從 `<button>` 換成 `<span>`（帶 `aria-label`，讀者還是知道那是什麼顏色），`useSortable({ disabled })` 讓卡片拖不動。**這只是不給誤導性的 affordance**——真正的防線是後端每個 handler 的 `requireWrite` / `requireEdit`。
 
-審核鈴鐺在 `AccountBar`（header 右上，和帳號、唯讀徽章、登出按鈕同一排），只在 `permApproveRegister` 時繪製。它訂閱 `auth:pendingUsers`，所以有人註冊時紅點會自己亮起來，不必重新載入；點開列出待審帳號，每個給「通過」與「拒絕」。通過只給 `permRead`，這件事寫在選單的註腳上，因為那是最容易誤會的地方。
+`permEditRequest` 的人走的是**同一個** `canEdit`，所以拖曳、modal、燈號一個不少；差別只有 `requestMode` 控制的文案（「提議修改」而不是「儲存」）與卡片上的「待審…」badge。前端沒有第二條呼叫路徑，樂觀更新也不用分岔——mutation 是同一個，要不要當提議由後端決定。
+
+鈴鐺在 `AccountBar`（header 右上，和帳號、徽章、登出按鈕同一排），是一個收件匣，最多三段，**每一段只在對應權限存在時才訂閱**（訂閱一個會拒絕自己的 query 會讓錯誤穿過 header）：`permApproveRegister` → 待審註冊（`auth:pendingUsers`）、`permWrite` → 待審編輯（`editRequests:list`）、`permEditRequest` → 我的提議（`editRequests:mine`）。紅點的條件是「有人在等你」——待審註冊或待審編輯，自己提出的不算。兩個審核權限彼此獨立，所以只有寫入權的人看到編輯那一段、只有註冊審核權的人看到註冊那一段。
+
+註冊那段的「通過」只給 `permRead`，這件事寫在選單的註腳上，因為那是最容易誤會的地方。編輯那段每一列直接把 diff 攤開（誰、哪張卡、什麼 → 什麼），因為審核者要決定的就是那幾行，不該再去看板上找。
+
+## 編輯提議：疊加、合併與核准
+
+語意與 `editRequests` 表在 `docs/data-model.md`；這裡是實作上三件值得知道的事。
+
+**三個模組是為了避免 import 循環。** 真實寫入抽到 `convex/apply.ts`，`board.ts` 與 `editRequests.ts` 都只往它單向 import（`board.ts → {apply, editRequests}`、`editRequests.ts → apply`）。好處不只是循環：核准和直接寫入是同一段程式，不會有「核准後結果不一樣」這種 bug。
+
+**疊加在 `board:get` 裡做，不在前端。** 拿到卡片之後，把呼叫者自己的提議套上去（`overlayTickets`）：`create` 生出一張合成卡片（`_id` 是提議的 id），`delete` 把卡片拿掉，`update` 改欄位，`checkpointId` 變了就整張搬到另一列。搬過去與新增的卡片要**落在該格最後**，做法跟 `appendToCell` 一致：先給 `Number.MAX_SAFE_INTEGER`，再用 UI 那個比較器把受影響的格子重編號 0..n-1，最後才讓明確的 `reorder` 提議覆蓋。這樣 reload 不會掉，別人也完全看不到。
+
+**合併發生在寫入提議的時候，不是讀的時候。** 新的操作先找「我對這張卡的既有提議」，有就併進去（規則表在 data-model.md）。因為 `create` 提議的卡片用提議 id 當 `_id`，接著對它做的修改與刪除自然落在同一列上，前端不需要知道這張卡是真的還是提議的。
 
 ## 時間區間與 lazy loading
 
