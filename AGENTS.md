@@ -6,7 +6,9 @@ TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex
 修改、刪除、點燈號換狀態，都走 `board:*` mutation），但 payload 仍是事實來源
 ——重新匯入會蓋回 payload 的值。看板前面有帳號密碼登入：讀要 `permRead`、
 寫要 `permWrite`，只有 `permEditRequest` 的人做的每個編輯會變成一筆待審提議，
-註冊要有人審核（見下方慣例與 `docs/data-model.md`）。
+註冊要有人審核（見下方慣例與 `docs/data-model.md`）。看板右下角還有一個聊天助理：
+使用者跟一個 agent 對話，agent 只讀寫訊息（要 `permAgent`），要改看板時下指令，
+由**使用者的瀏覽器**用**使用者自己的憑證**執行。
 
 ## 常用指令
 
@@ -60,6 +62,8 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 動編輯提議（提議、合併、疊加、審核） | `docs/data-model.md` 的「編輯提議」＋ `docs/architecture.md` 同名章節 |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
+| 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來） |
+| 動聊天／指令機制（`messages` 表、執行器） | `docs/data-model.md` 的「看板助理的對話」＋ `docs/architecture.md` 的「看板助理」 |
 
 ## Coding 原則
 
@@ -92,23 +96,30 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   `{ account, tokenHash }`（`tokenHash = sha256("kanban:<account>:<password>")`，
   在瀏覽器用 Web Crypto 算）當 `auth` 參數送進每一次呼叫；handler 第一行就是
   `requireRead` / `requireWrite` / `requireEdit` /
-  `requirePermission(..., "permApproveRegister")`。
+  `requirePermission(..., "permApproveRegister" | "permAgent")`。
   讀（`board:get`）要 `permRead`，寫（`board:moveTicket` / `reorderCell` /
   `createTicket` / `updateTicket` / `deleteTicket`）要 `permWrite` 或
-  `permEditRequest`；唯一不收憑證的
+  `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`；
+  唯一不收憑證的
   是 `staticHosting:getCurrentDeployment`（只有部署資訊，登入頁也要能提示更新）。
   **認證過不等於可信任**，欄位驗證照樣要跟匯入一樣嚴（標題非空、ISO 日期、PR
   網址、key 唯一、epic 護欄），共用的檢查住在 `convex/validation.ts`。
   **匯入、設定與帳號管理一律留在 internal**（`convex/data.ts` 的 `importBoard` /
   `setConfig`，`convex/auth.ts` 的 `seedUser` / `deleteUser` / `listUsers`）；
-  `approve` 只會給 `permRead`，`permWrite`、`permEditRequest` 與
-  `permApproveRegister` 只能從終端機用 `seedUser` 給，UI 沒有這條路。要再加公開
-  函式前先想清楚它要哪個權限。
+  `approve` 只會給 `permRead`，`permWrite`、`permEditRequest`、
+  `permApproveRegister` 與 `permAgent` 只能從終端機用 `seedUser` 給，UI 沒有這條
+  路。要再加公開函式前先想清楚它要哪個權限。
 - **`permEditRequest` 的人走同一組 `board:*` mutation，分岔在後端。** 有
   `permWrite` 就直接套用，只有 `permEditRequest` 就轉成 `editRequests` 的一筆提議
   （同一張卡的多次操作合併成一筆）。前端不分岔，樂觀更新也不分岔——要改編輯行為
   就改 `convex/board.ts` 的那個分岔，不要在 UI 裡再開一條路。真實寫入只住在
   `convex/apply.ts`，核准提議跟直接寫入共用它，所以兩邊結果永遠一致。
+- **看板助理只碰訊息，永遠不直接寫看板。** 助理帳號拿 `permRead + permAgent`，
+  能叫的只有 `messages:agent*` 與 `board:get`；要改看板就用 `agentCommand` 下一條
+  指令（卡片一律用 **key** 指涉），由使用者的瀏覽器（`useCommandExecutor`）拿使用者
+  的憑證去跑那五個 `board:*` mutation。所以權限語意是免費的，不要為助理開任何寫入
+  路徑。助理跑在沒有 `convex login` 的 session，走 HTTP `/api/query`、`/api/mutation`；
+  **憑證只從環境變數來，不准寫進版控檔案**（做法見 `board-assistant` skill）。
 - **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
   要換欄位或改 key 就改 payload 重新匯入。
 - **Jira 站台網址與負責人顏色住在 Convex 的 `config` 表**，不寫在程式裡；用

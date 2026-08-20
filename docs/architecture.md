@@ -13,6 +13,10 @@ convex/
   apply.ts           所有對 tickets 的真實寫入（直接寫入與核准提議共用同一份）
   editRequests.ts    編輯提議：合併寫入、board:get 的疊加、diff 描述，
                      以及 list / mine / withdraw / approve / dismiss
+  messages.ts        看板助理的聊天：使用者那半邊（send / thread / claim / report，
+                     要 permRead）與助理那半邊（agentInbox / agentRead / agentReply /
+                     agentCommand / agentMarkHandled，要 permAgent）。
+                     指令只是一則訊息，看板由使用者的瀏覽器去改
   auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
                      requireEdit / requirePermission、login / register /
                      pendingUsers / approve / dismiss，以及 internal 的
@@ -34,7 +38,10 @@ src/
   lib/scroll.ts      捲到本週那一列（開場自動捲動與按鈕共用）
   lib/filters.ts     篩選選擇的 localStorage 存取（版本化 key、載入時驗證）
   lib/dnd.ts         拖曳的資料型別、暫存區 id、碰撞判定、drop 目標解析
+  lib/assistant.ts   助理指令的型別、key／epic code → Convex id 的解析、
+                     指令摘要與未讀時間的 localStorage 存取
   hooks/             useStatusCycle — 狀態燈號的點擊循環與 debounce
+                     useCommandExecutor — 認領並執行助理下的指令
   components/        AuthProvider — 憑證的 context（訂閱 auth:login）
                      LoginScreen — 登入／註冊表單與等待審核的畫面
                      AccountBar — header 右側：收件匣鈴鐺（註冊／待審編輯／我的提議）、
@@ -46,6 +53,7 @@ src/
                      DraggableTicket / StagingTray — 拖曳與暫存區
                      TicketDialog — 新增／編輯／刪除卡片的表單
                      BoardActionsProvider — 開表單與切換狀態的 context
+                     BoardAssistant — 右下角的聊天泡泡與對話視窗（含執行器）
                      UpdateNotice — 有新版本時的重新載入提示
   components/ui/     shadcn/ui 元件
 data/
@@ -54,6 +62,8 @@ docs/                本目錄：資料模型、專案結構、進度
 .claude/skills/
   jira-board-import/ 從 Jira 匯入的 skill；匯入／週次／狀態對應腳本在它的 scripts/，
                      payload 格式與更新看板資料的說明在它的 references/
+  board-assistant/   當看板助理的 skill：憑證從環境變數來、輪詢方式、指令格式、
+                     結果狀態機與紅線；scripts/agent-call.mjs 是一次 HTTP 呼叫
 ```
 
 `convex/_generated/` 有進版控，所以剛 clone 下來不需要先登入 Convex 就能 `npm run build`。
@@ -83,6 +93,24 @@ docs/                本目錄：資料模型、專案結構、進度
 **疊加在 `board:get` 裡做，不在前端。** 拿到卡片之後，把呼叫者自己的提議套上去（`overlayTickets`）：`create` 生出一張合成卡片（`_id` 是提議的 id），`delete` 把卡片拿掉，`update` 改欄位，`checkpointId` 變了就整張搬到另一列。搬過去與新增的卡片要**落在該格最後**，做法跟 `appendToCell` 一致：先給 `Number.MAX_SAFE_INTEGER`，再用 UI 那個比較器把受影響的格子重編號 0..n-1，最後才讓明確的 `reorder` 提議覆蓋。這樣 reload 不會掉，別人也完全看不到。
 
 **合併發生在寫入提議的時候，不是讀的時候。** 新的操作先找「我對這張卡的既有提議」，有就併進去（規則表在 data-model.md）。因為 `create` 提議的卡片用提議 id 當 `_id`，接著對它做的修改與刪除自然落在同一列上，前端不需要知道這張卡是真的還是提議的。
+
+## 看板助理：聊天、指令與執行器
+
+`messages` 表、指令白名單與函式面在 `docs/data-model.md` 的「看板助理的對話」。這裡是前端怎麼組起來，以及為什麼要這樣組。
+
+**整個設計就一句話：助理不寫看板，瀏覽器才寫。** 助理（另一個 session 裡的 Claude Code）只能讀寫訊息與 `board:get`，它下的指令是一則訊息；真正呼叫 `board:*` 的是使用者的瀏覽器，用使用者自己的憑證。所以權限語意是免費的——`permWrite` 的人指令直接生效，`permEditRequest` 的人得到一筆待審提議（`requestMode` 只影響回報的字），唯讀的人被 mutation 拒絕，這三條路在前端都沒有專屬程式碼。
+
+**執行器掛在 FAB 上，不掛在視窗裡。** `BoardAssistant` 一直掛載（登入後才有），`useCommandExecutor` 就在它裡面，所以**把聊天視窗關掉不會讓指令卡住**——只要看板那一頁還開著，指令就會被執行；紅點會告訴你有結果可以看。真正會讓指令停在 `pending` 的只有「沒人開著看板」，而那時本來就沒有人能授權這個修改。
+
+**key 的解析在前端，因為看板在這裡。** `resolveCommand`（`src/lib/assistant.ts`）把 key 與 epic code 對成 Convex id。它訂閱的是**不帶 `fromDate` 的 `board:get`**（整段歷史），因為助理提到的卡片可能在沒人捲到的舊週次；而且只在「有 pending 指令」時訂閱（其餘時候 `"skip"`），閒著的聊天不會多養一個 subscription。解析不到就不是壞掉的呼叫，而是一句人看得懂的原因（「看板上找不到 key 為 X 的卡片」）寫回訊息，讓助理自己修。
+
+**認領先於執行。** `messages:claim` 在自己的交易裡把一則 `pending` 翻成 `running` 並回答「是不是你的」，所以開兩個分頁只會執行一次（實測過：兩個分頁、一條 `createTicket`，只長出一張卡）。認領超過 60 秒沒回報就可以被接手——分頁中途關掉不該讓一則指令永遠卡住。指令**一次跑一則、最舊的先跑**，因為同一輪的一批指令常常互相依賴（先開卡、再排那一格的順序）。
+
+**未讀紅點是時間比較，不是計數器。** 視窗關著時最後一則助理訊息比「上次看到」新就亮點，`kanban.chat.seen.v1` 依帳號記在 localStorage（`src/lib/assistant.ts`）。指令訊息在視窗裡顯示助理寫的那句人話、底下一行小字的指令摘要，以及狀態徽章（等待執行／執行中／已執行／已建立提議／失敗），失敗時多一塊寫著原因的紅框——那句原因就是助理接下來要讀的東西。
+
+**FAB 與視窗都在 `z-40`**，刻意低於暫存區與 dialog（`z-50`）：拖曳到一半時聊天泡泡不該蓋住暫存區。`BoardAssistant` 也掛在 `DndContext` 外面——它跟拖曳無關，而且卡片還在空中時執行器得繼續跑。
+
+助理端是**公開函式**（要 `permAgent`），因為它跑在沒有 Convex 憑證的容器裡：跟瀏覽器一樣送 `{ account, tokenHash }`，直接 `POST /api/query`、`/api/mutation`。輪詢方式、指令範例與紅線在 `.claude/skills/board-assistant/SKILL.md`；**憑證只從環境變數來，不進版控**。
 
 ## 時間區間與 lazy loading
 

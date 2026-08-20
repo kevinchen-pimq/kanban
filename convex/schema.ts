@@ -1,6 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+import { checkpointRefValidator } from "./validation";
+
 /**
  * The four status lights the board renders:
  *   todo    — 灰色: to do / backlog
@@ -75,6 +77,82 @@ export const editFieldsValidator = v.object({
   githubPrs: v.optional(v.union(v.array(v.string()), v.null())),
 });
 
+/** Who wrote a chat message: the person, or the board assistant agent. */
+export const messageRoleValidator = v.union(
+  v.literal("user"),
+  v.literal("agent"),
+);
+
+/**
+ * One board operation the assistant asks the user's browser to perform.
+ *
+ * The five shapes map one-to-one onto the five `board:*` mutations, and that is
+ * the whole surface — an agent cannot ask for anything the board itself cannot
+ * do. Cards are named by **key** and cells by epic `code` + week number, never by
+ * Convex id: the agent talks to a terminal and reads keys off the board or out of
+ * Jira, while ids are per-deployment and meaningless to it. The browser resolves
+ * those names against the board it can see (`src/lib/assistant.ts`), so a name
+ * that matches nothing fails the command instead of guessing.
+ *
+ * `createTicket` may leave `checkpoint` out, which lands the card in the backlog
+ * pool — the honest row for work with no week yet.
+ */
+export const commandValidator = v.union(
+  v.object({
+    kind: v.literal("moveTicket"),
+    key: v.string(),
+    checkpoint: checkpointRefValidator,
+  }),
+  v.object({
+    kind: v.literal("reorderCell"),
+    epicCode: v.string(),
+    checkpoint: checkpointRefValidator,
+    /** Every card in the cell, in the order it should be shown. */
+    keys: v.array(v.string()),
+  }),
+  v.object({
+    kind: v.literal("createTicket"),
+    epicCode: v.string(),
+    title: v.string(),
+    checkpoint: v.optional(checkpointRefValidator),
+    key: v.optional(v.string()),
+    status: v.optional(statusValidator),
+    assignee: v.optional(v.string()),
+    dueDate: v.optional(v.string()),
+    tag: v.optional(v.string()),
+    githubPrs: v.optional(v.array(v.string())),
+  }),
+  v.object({
+    kind: v.literal("updateTicket"),
+    key: v.string(),
+    title: v.optional(v.string()),
+    checkpoint: v.optional(checkpointRefValidator),
+    status: v.optional(statusValidator),
+    // `null` clears the field, exactly as in `board:updateTicket`.
+    assignee: v.optional(v.union(v.string(), v.null())),
+    dueDate: v.optional(v.union(v.string(), v.null())),
+    tag: v.optional(v.union(v.string(), v.null())),
+    githubPrs: v.optional(v.union(v.array(v.string()), v.null())),
+  }),
+  v.object({ kind: v.literal("deleteTicket"), key: v.string() }),
+);
+
+/**
+ * Where a command message is in its life.
+ *
+ * `pending` → a browser claims it (`running`) → one of three endings. `proposed`
+ * is not a separate kind of success: it is what "executed" means for an account
+ * that may only propose, and saying so is the difference between "done" and
+ * "waiting for a reviewer".
+ */
+export const commandStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("running"),
+  v.literal("executed"),
+  v.literal("proposed"),
+  v.literal("failed"),
+);
+
 export default defineSchema({
   // X axis: one column per epic, left to right by `order`.
   epics: defineTable({
@@ -137,7 +215,7 @@ export default defineSchema({
   // there is no session, no expiry and no revocation beyond deleting or
   // re-seeding the account. See `docs/data-model.md` for the trade-off.
   //
-  // The four permissions are independent and default to false, which is what
+  // The five permissions are independent and default to false, which is what
   // makes a fresh registration a *pending* one: it can log in as far as being
   // told it is awaiting approval, and nothing else.
   users: defineTable({
@@ -158,6 +236,13 @@ export default defineSchema({
     // requests existed have no such field — absent reads as false everywhere,
     // which is the same answer a backfill would have given without the write.
     permEditRequest: v.optional(v.boolean()),
+    // Act as the board assistant: read every chat thread and post agent replies
+    // and commands (`convex/messages.ts`). An agent account holds this plus
+    // `permRead` and *nothing else* — it can see the board well enough to talk
+    // about it and it can ask, but every actual write goes through the browser of
+    // the person it is talking to, with that person's permissions. Optional for
+    // the same reason as `permEditRequest`: absent is false.
+    permAgent: v.optional(v.boolean()),
   })
     // `account` is the natural key every credential check looks up.
     .index("by_account", ["account"]),
@@ -198,6 +283,46 @@ export default defineSchema({
     // Everything is looked up per requester: the overlay reads their own rows,
     // and so does the merge that folds a second operation into the first.
     .index("by_requester", ["requestedBy"]),
+
+  // The board assistant's chat: one thread per account.
+  //
+  // The agent behind it is a Claude Code session in a terminal, and this table is
+  // the *whole* interface it has. It reads and writes messages through internal
+  // functions; it never touches `tickets`. When it wants something changed it
+  // posts a `command` message, and the user's own browser executes it with the
+  // user's own credentials against the ordinary `board:*` mutations — so
+  // permissions come out right for free: `permWrite` applies the change,
+  // `permEditRequest` turns it into a pending proposal, and read-only fails.
+  //
+  // `account` is the conversation: everybody has exactly one thread and can only
+  // read their own (`messages:thread` filters by the caller's account), which is
+  // also why there is no participant list and no thread id.
+  messages: defineTable({
+    // The thread this belongs to — the account that is talking to the assistant.
+    account: v.string(),
+    role: messageRoleValidator,
+    // What the chat window shows. For a command message this is the agent's own
+    // one-line description of what it is about to do, in human language: the user
+    // should be able to read the conversation without decoding a payload.
+    text: v.string(),
+    // Present exactly on an agent command message; absent makes this plain talk.
+    command: v.optional(commandValidator),
+    // Present exactly when `command` is, tracking that command's execution.
+    status: v.optional(commandStatusValidator),
+    // The outcome once settled: what was done, or why it could not be.
+    result: v.optional(v.string()),
+    // When a browser claimed this command. A claim that never reported back (the
+    // tab was closed mid-flight) goes stale and may be taken over.
+    claimedAt: v.optional(v.number()),
+    // Whether the agent has taken this message into account. User messages
+    // arrive `false` and are the agent's inbox; its own replies are `true` at
+    // once; its commands stay `false` until it has read the result.
+    handled: v.boolean(),
+  })
+    // The thread, for the browser and for the agent reading one conversation.
+    .index("by_account", ["account"])
+    // The agent's inbox: everything still waiting for it, across all threads.
+    .index("by_handled", ["handled"]),
 
   // Board-wide settings, as a single document (the first row wins).
   //

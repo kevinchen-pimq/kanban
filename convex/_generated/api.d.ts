@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as board from "../board.js";
 import type * as data from "../data.js";
 import type * as editRequests from "../editRequests.js";
+import type * as messages from "../messages.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as validation from "../validation.js";
 
@@ -28,6 +29,7 @@ declare const fullApi: ApiFromModules<{
   board: typeof board;
   data: typeof data;
   editRequests: typeof editRequests;
+  messages: typeof messages;
   staticHosting: typeof staticHosting;
   validation: typeof validation;
 }>;

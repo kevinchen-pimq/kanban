@@ -1,13 +1,14 @@
 # 資料模型
 
-`convex/schema.ts` 六張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關：
+`convex/schema.ts` 七張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關，一張是聊天：
 
 - **`epics`** — X 軸的欄。`code`（如 `DEMO-BOARD`）、`name`、`accent` 顏色鍵、`order` 決定左右順序。
 - **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`；週別存 `weekNumber` 與 `startDate`/`endDate`（ISO 日期字串）。**列的順序由日期推導**，不看 payload 給的 `order`——週次有真實日期，從日期排就不可能因為匯入時 `order` 給錯而排亂（這個錯踩過一次）。backlog 永遠在最後。
 - **`tickets`** — 卡片。以 `epicId` + `checkpointId` 決定落在哪一格，`status` 是四個燈號之一。`assignee` / `dueDate` / `githubPrs` / `tag` 皆為選填。
 - **`config`** — 看板設定，只有一筆文件（讀取時取第一筆）。存 `jiraBaseUrl` 與 `assigneeColors`，見下方。
-- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與四個獨立的布林權限，見「登入與權限」。
+- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與五個獨立的布林權限，見「登入與權限」。
 - **`editRequests`** — 還沒被審核的編輯提議，一筆對應一張卡（或一格的排序）。只有 `permEditRequest` 的人做的編輯會落在這裡，見「編輯提議」。
+- **`messages`** — 看板助理的聊天訊息，一個帳號一條對話。助理的指令也是一則訊息，帶著它的執行狀態，見「看板助理的對話」。
 
 ## 狀態燈號
 
@@ -62,8 +63,11 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 | `permWrite` | 能不能編輯（拖曳、新增、修改、刪除、點燈號），也代表能審核別人的編輯提議 |
 | `permEditRequest` | 能不能**提議**編輯。選填欄位——在這個功能之前建立的帳號沒有它，讀不到就當 false |
 | `permApproveRegister` | 能不能看到並處理待審註冊 |
+| `permAgent` | 能不能當看板助理——讀寫聊天訊息、對別人的對話下指令。選填欄位，讀不到就當 false |
 
-四個權限彼此獨立，任何組合都成立。只有 `permRead` 是唯讀；`permRead + permEditRequest` 看到完整的編輯介面，但每個動作變成一筆待審的提議（見下面的 `editRequests`）；`permWrite` 直接寫入，永遠不會產生提議。兩個都有的時候 `permWrite` 贏。
+五個權限彼此獨立，任何組合都成立。只有 `permRead` 是唯讀；`permRead + permEditRequest` 看到完整的編輯介面，但每個動作變成一筆待審的提議（見下面的 `editRequests`）；`permWrite` 直接寫入，永遠不會產生提議。兩個都有的時候 `permWrite` 贏。
+
+`permAgent` 是給機器的，而且刻意只給一件事的權力：助理帳號拿 `permRead + permAgent`，**沒有 `permWrite`、也沒有 `permEditRequest`**，所以它讀得到看板、講得出話，但改不動任何一張卡（見下面的「看板助理的對話」）。
 
 **密碼永遠不離開瀏覽器。** hash 在前端用 Web Crypto（`crypto.subtle.digest`）算（`src/lib/auth.ts` 的 `computeTokenHash`），只有 hash 會被送出、存進 `users`、寫進 localStorage 的 `kanban.auth.v1`。所以後端沒有任何地方看得到、存得到或 log 得到明文密碼。帳號名稱是 hash 的一部分，所以正規化必須兩邊一致——前端在 hash 之前先做，後端用同一條規則再做一次。
 
@@ -77,7 +81,7 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 requireRead(ctx, auth)                          → permRead，否則丟 AUTH_DENIED
 requireWrite(ctx, auth)                         → permWrite
 requireEdit(ctx, auth)                          → permWrite 或 permEditRequest（回 user，讓 handler 自己分岔）
-requirePermission(ctx, auth, "permApproveRegister")
+requirePermission(ctx, auth, "permApproveRegister")   // 或 "permAgent"
 ```
 
 查不到帳號和 hash 不符回同一個答案（不告訴陌生人有哪些帳號存在）。錯誤訊息都帶 `AUTH_DENIED` 前綴，前端據此把失效的憑證清掉、退回登入頁，而不是在空看板上蓋一塊紅字。
@@ -86,16 +90,16 @@ requirePermission(ctx, auth, "permApproveRegister")
 
 | 函式 | 型別 | 需要的權限 | 做什麼 |
 | --- | --- | --- | --- |
-| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permEditRequest`、`permApproveRegister`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢 |
-| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，四個權限**全部 false**；帳號重複拒絕 |
+| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permEditRequest`、`permApproveRegister`、`permAgent`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢。UI 不看 `permAgent`，它在那裡是為了讓助理用一次 HTTP 呼叫驗自己的憑證 |
+| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，五個權限**全部 false**；帳號重複拒絕 |
 | `auth:pendingUsers` | query | `permApproveRegister` | 待審帳號（`permRead=false`），最舊的在前 |
 | `auth:approve` | mutation | `permApproveRegister` | **只設 `permRead=true`**，不會給其他權限 |
 | `auth:dismiss` | mutation | `permApproveRegister` | 刪掉那筆註冊，名字就釋放出來。已經過審的帳號拒絕刪（誤點鈴鐺不該砍掉在用的帳號） |
-| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，四個權限都自己指定（`permEditRequest` 選填，不給就是 false）。第一個管理員從這裡進來 |
-| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議 |
+| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，五個權限都自己指定（`permEditRequest` 與 `permAgent` 選填，不給就是 false）。第一個管理員從這裡進來 |
+| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議，以及他的聊天訊息（對話是用帳號名稱定位的，留著會被同名新帳號讀到） |
 | `auth:listUsers` | **internal** | — | 列出帳號與權限（不回 hash） |
 
-`permWrite`、`permEditRequest` 與 `permApproveRegister` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
+`permWrite`、`permEditRequest`、`permApproveRegister` 與 `permAgent` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
 
 ```bash
 # hash 要在外面算：sha256("kanban:<account>:<password>")
@@ -106,6 +110,9 @@ npx convex run auth:seedUser '{"account":"someone","tokenHash":"<64 hex>",
 # 只給提議編輯的人：
 npx convex run auth:seedUser '{"account":"someone","tokenHash":"<64 hex>",
   "permRead":true,"permEditRequest":true}'
+# 看板助理帳號：讀得到看板、能講話，改不動任何東西
+npx convex run auth:seedUser '{"account":"agent","tokenHash":"<64 hex>",
+  "permRead":true,"permAgent":true}'
 npx convex run auth:listUsers
 npx convex run auth:deleteUser '{"account":"someone"}'
 npx convex run auth:seedUser ... --prod   # 對 production
@@ -131,7 +138,7 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `updateTicket` | 改標題／狀態／週次／負責人／日期／標籤／PR | 同上的欄位檢查；**不收 `epicId` 與 `key`**，所以改不動 |
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的九個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
@@ -200,3 +207,56 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `editRequests:dismiss` | mutation | `permWrite` | 直接刪掉，提議者的疊加隨即消失 |
 
 **核准走的是跟直接寫入完全同一條路**（`convex/apply.ts`），所以「被核准」和「有寫入權的人自己做」結果一致，護欄與欄位驗證也一模一樣。核准會**重新驗證**：卡片在等待期間被刪掉、epic 不對之類的情況會失敗，錯誤原因回給審核者，而且那一列**留著**讓他能改按「忽略」（mutation 失敗就整筆 rollback，這是免費的）。審核清單本身也會先提醒：目標卡片已經不在了的提議帶一行警告。
+
+## 看板助理的對話（`messages` 表）
+
+看板右下角的聊天泡泡背後是一張很小的表。每個帳號一條對話，助理（一個跑在終端機的 Claude Code session）讀它、回它，需要改看板時**下指令**，而指令是**使用者的瀏覽器**用**使用者自己的憑證**執行的。
+
+**助理碰不到看板資料。** 它能叫的函式只有下面那五個 `messages:agent*` 加上 `board:get`，帳號也只有 `permRead + permAgent`。所以一條指令的後果永遠帶著使用者的權限，不是助理的：`permWrite` 的人指令直接生效，`permEditRequest` 的人得到一筆待審提議（完全沒有額外程式碼），唯讀的人被拒絕。護欄、欄位驗證與提議合併也都是人手按下去時走的那一套。
+
+| 欄位 | 內容 |
+| --- | --- |
+| `account` | 對話的主人。每個人只讀得到自己的（查詢從憑證推出帳號，沒有參數可以指定別人） |
+| `role` | `user` / `agent` |
+| `text` | 使用者說的話，或**助理對指令的一句人話描述**（聊天視窗顯示的就是這句） |
+| `command` | 只有助理的指令訊息有。五種形狀之一，見下面 |
+| `status` | 指令的狀態：`pending` → `running` → `executed` / `proposed` / `failed` |
+| `result` | 成功時是送出內容的摘要，失敗時是原因原文 |
+| `claimedAt` | 瀏覽器認領的時間。超過 60 秒沒回報就可以被另一個分頁接手 |
+| `handled` | **助理的收件匣旗標**：使用者的訊息進來是 false，助理的回覆一進來就是 true，指令要等結果被讀過才變 true |
+
+索引兩個：`by_account`（讀一條對話）、`by_handled`（一次查出「所有還有事情等著」的訊息）。收件匣用**每則訊息一個 flag** 而不是游標，因為要回答的問題不只「有沒有新訊息」，還有「哪一條指令的結果還沒被看過」——游標只能表達前者。
+
+### 指令：五種形狀，一律用 key 指涉
+
+`convex/schema.ts` 的 `commandValidator` 就是白名單，一一對應五個 `board:*` mutation。**卡片一律用 `key`、格子用 epic `code` + checkpoint**，不用 Convex id——id 換一個 deployment 就不一樣，key 不會。`checkpoint` 是週次數字或字串 `"backlog"`。
+
+```jsonc
+{ "kind": "moveTicket",   "key": "ABC-12", "checkpoint": 34 }
+{ "kind": "reorderCell",  "epicCode": "ABC", "checkpoint": 34, "keys": ["ABC-12", "ABC-9"] }
+{ "kind": "createTicket", "epicCode": "ABC", "title": "…",     // 其餘選填；沒有 checkpoint 就是 backlog
+  "checkpoint": 34, "key": "…", "status": "doing", "assignee": "…",
+  "dueDate": "2026-08-28", "tag": "FE", "githubPrs": ["https://…"] }
+{ "kind": "updateTicket", "key": "ABC-12", "status": "done" }  // 只送要改的欄位，null 清空
+{ "kind": "deleteTicket", "key": "ABC-12" }
+```
+
+key 與 code 的解析在**前端**做（`src/lib/assistant.ts` 的 `resolveCommand`），因為那裡本來就有整份看板。查不到的 key 或不存在的週次不會變成一個壞掉的呼叫，而是一筆 `failed` 加上一句人看得懂的原因，寫回訊息裡給助理讀。
+
+### 函式面
+
+| 函式 | 型別 | 需要的權限 | 做什麼 |
+| --- | --- | --- | --- |
+| `messages:send` | mutation | `permRead` | 說一句話。**問問題不是編輯**，所以門檻是讀取權 |
+| `messages:thread` | query | `permRead` | 自己的整條對話（前端的訂閱來源） |
+| `messages:claim` | mutation | `permRead` | 原子性地認領一則 `pending` 指令，回 `{ claimed }` |
+| `messages:report` | mutation | `permRead` | 回報結果：`executed` / `proposed` / `failed` ＋原因 |
+| `messages:agentInbox` | query | `permAgent` | 每一條「有事情等著」的對話：新訊息數、在飛的指令數、待讀結果數 |
+| `messages:agentRead` | query | `permAgent` | 讀某個帳號的整條對話（含 `handled`） |
+| `messages:agentReply` | mutation | `permAgent` | 回一句話（進來就是 handled） |
+| `messages:agentCommand` | mutation | `permAgent` | 下一條指令（`description` ＋ `command`） |
+| `messages:agentMarkHandled` | mutation | `permAgent` | 「這條對話我都讀完了」。**還在飛的指令不會被清掉** |
+
+助理那半邊是**公開函式**而不是 internal，因為它跑在沒有 Convex 憑證的容器裡：它跟瀏覽器一樣送 `{ account, tokenHash }`，直接打 `POST /api/query` 與 `/api/mutation`。做法與紅線寫在 `.claude/skills/board-assistant/SKILL.md`。**憑證不進版控**——那份 skill 只說從環境變數讀，沒有寫任何 hash。
+
+`claim` 是獨立的 mutation，這是整個機制唯一真正微妙的地方：Convex 的 mutation 是可序列化的交易，所以兩個分頁讀到同一則 `pending` 時只有一個拿到 `claimed: true`。把它塞進執行器的「讀對話→執行」裡就會有一段兩邊都以為指令是自己的空窗，使用者會看到卡片被移兩次——或者兩筆提議要審。

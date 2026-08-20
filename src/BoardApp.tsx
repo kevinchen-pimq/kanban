@@ -20,6 +20,7 @@ import {
 
 import { AssigneeAvatar } from "@/components/AssigneeAvatar";
 import { useSession } from "@/components/AuthProvider";
+import { BoardAssistant } from "@/components/BoardAssistant";
 import {
   BoardActionsProvider,
   type BoardActions,
@@ -662,6 +663,10 @@ export function BoardApp() {
             )}
           </DragOverlay>
         </DndContext>
+
+        {/* Outside the DndContext: the assistant has nothing to do with dragging,
+            and its executor has to keep running while a card is in the air. */}
+        <BoardAssistant />
 
         {editing && (
           <TicketDialog
