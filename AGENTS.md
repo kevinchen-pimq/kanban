@@ -8,7 +8,8 @@ TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex
 寫要 `permWrite`，只有 `permEditRequest` 的人做的每個編輯會變成一筆待審提議，
 註冊要有人審核（見下方慣例與 `docs/data-model.md`）。看板右下角還有一個聊天助理：
 使用者跟一個 agent 對話，agent 只讀寫訊息（要 `permAgent`），要改看板時下指令，
-由**使用者的瀏覽器**用**使用者自己的憑證**執行。
+由**使用者的瀏覽器**用**使用者自己的憑證**執行；agent 靠 WebSocket 即時被喚醒，
+讀到訊息會即時回寫「已讀」。
 
 ## 常用指令
 
@@ -62,8 +63,8 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 動編輯提議（提議、合併、疊加、審核） | `docs/data-model.md` 的「編輯提議」＋ `docs/architecture.md` 同名章節 |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
-| 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來） |
-| 動聊天／指令機制（`messages` 表、執行器） | `docs/data-model.md` 的「看板助理的對話」＋ `docs/architecture.md` 的「看板助理」 |
+| 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來、等訊息用 `scripts/listen.mjs`） |
+| 動聊天／指令／已讀機制（`messages` 表、執行器、listener） | `docs/data-model.md` 的「看板助理的對話」＋ `docs/architecture.md` 的「看板助理」 |
 
 ## Coding 原則
 
@@ -118,7 +119,11 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   能叫的只有 `messages:agent*` 與 `board:get`；要改看板就用 `agentCommand` 下一條
   指令（卡片一律用 **key** 指涉），由使用者的瀏覽器（`useCommandExecutor`）拿使用者
   的憑證去跑那五個 `board:*` mutation。所以權限語意是免費的，不要為助理開任何寫入
-  路徑。助理跑在沒有 `convex login` 的 session，走 HTTP `/api/query`、`/api/mutation`；
+  路徑。助理跑在沒有 `convex login` 的 session，一次性呼叫走 HTTP `/api/query`、
+  `/api/mutation`，**等訊息一律用 `scripts/listen.mjs`（WebSocket 訂閱
+  `messages:agentWatch`，阻塞到有事件就結束程序），不要寫 `sleep` 輪詢迴圈**；
+  main agent 只負責等與派工，一條對話一個 sub-agent。已讀（`readAt`，listener 自動標）
+  跟處理完（`handled`）是兩件事，不要合併。
   **憑證只從環境變數來，不准寫進版控檔案**（做法見 `board-assistant` skill）。
 - **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
   要換欄位或改 key 就改 payload 重新匯入。

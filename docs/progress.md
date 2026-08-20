@@ -60,6 +60,13 @@ _更新於 2026-08-20。_
   分頁只會執行一次；執行器掛在一直存在的 FAB 上，所以把視窗關掉也不會卡住指令，
   有新回覆時 FAB 亮紅點。失敗（key 不存在、週次不存在、驗證不過）會把原因寫回訊息
   給 agent 讀。agent 端的做法與紅線在 `.claude/skills/board-assistant/SKILL.md`。
+- **助理的即時監聽與已讀**：agent 端不再輪詢——`messages:agentWatch` 是「還沒讀到的
+  事件」（新訊息／指令結果兩種），`scripts/listen.mjs` 用 WebSocket 訂閱它、阻塞到有
+  事件、標已讀後印出 JSON 就結束程序，所以 main agent 只要把它丟到背景 task 就會被
+  喚醒（實測 ~50ms），一條對話派一個 sub-agent（skill 的「The duty loop」）。訊息多了
+  `readAt`（**已讀 ≠ 處理完**：`handled` 還是收件匣旗標），聊天視窗在使用者自己的泡泡
+  底下反應式地長出「已讀」小字。`agentMarkRead` 回傳真正標到的 id，所以多個 listener
+  同時等也只有一個會接手同一則訊息。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
   當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`）
@@ -72,5 +79,5 @@ _更新於 2026-08-20。_
 - 回寫 Jira（看板上的修改只留在 Convex，完整重新匯入會被 payload 蓋掉）
 - 換卡片的 Epic（刻意不做，見 data-model.md）
 - Jira 同步自動化（目前由 Agent 依 skill 手動執行）
-- 助理的推播（沒有 webhook，agent 靠輪詢 `messages:agentInbox`；使用者那邊也沒有
-  通知，看板沒開著的時候指令就停在 `pending`）
+- 使用者那邊的推播（助理已經是即時的，但使用者沒有瀏覽器通知；看板沒開著的時候
+  指令就停在 `pending`）

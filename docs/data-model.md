@@ -138,7 +138,7 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `updateTicket` | 改標題／狀態／週次／負責人／日期／標籤／PR | 同上的欄位檢查；**不收 `epicId` 與 `key`**，所以改不動 |
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的九個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
@@ -223,9 +223,29 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `status` | 指令的狀態：`pending` → `running` → `executed` / `proposed` / `failed` |
 | `result` | 成功時是送出內容的摘要，失敗時是原因原文 |
 | `claimedAt` | 瀏覽器認領的時間。超過 60 秒沒回報就可以被另一個分頁接手 |
+| `readAt` | **助理看到它的時間**（下面「已讀」一節） |
 | `handled` | **助理的收件匣旗標**：使用者的訊息進來是 false，助理的回覆一進來就是 true，指令要等結果被讀過才變 true |
 
 索引兩個：`by_account`（讀一條對話）、`by_handled`（一次查出「所有還有事情等著」的訊息）。收件匣用**每則訊息一個 flag** 而不是游標，因為要回答的問題不只「有沒有新訊息」，還有「哪一條指令的結果還沒被看過」——游標只能表達前者。
+
+### 已讀（`readAt`）與處理完（`handled`）是兩件事
+
+`readAt` 是「這一列**到達助理**的時刻」，`handled` 是「助理**處理完**了」。刻意分成兩個欄位，因為那是兩個時間點：問題在一秒內被讀到，但整段對話可能還要跑好幾分鐘才算結束——合成一個欄位就只能表達其中一件，聊天視窗會變成「回完才顯示已讀」，收件匣也會在對話還沒完成時就清空。
+
+- 誰寫：`messages:agentMarkRead`（要 `permAgent`，收 `messageIds`），由助理的 listener（`.claude/skills/board-assistant/scripts/listen.mjs`）在收到事件的同一瞬間呼叫。`agentMarkHandled` 清掉一列時如果還沒有 `readAt` 也會補上——處理完當然看過了，而且沒用 listener 的 session 也該讓使用者看到已讀。
+- 前端怎麼用：`messages:thread` 回傳 `readAt`，聊天視窗在**使用者自己**的泡泡底下顯示一行小小的「已讀」。因為那是一個 subscription，訊息送出時沒有標示，助理讀到的那一刻才反應式地出現——這是使用者唯一看得出「助理真的在線上」的訊號。
+- 為什麼用 id 而不是「整條對話都標已讀」：快照與 mutation 之間可能又進來一則訊息，整條標下去會讓它「已讀但沒人看過」。而且 `agentMarkRead` 會**回傳它真正標到的 id**——mutation 是交易，所以兩個同時在等的 listener 對同一則訊息只有一個標得到，另一個拿到空陣列就繼續等。認領語意是免費送的，多個助理同時值班不會回同一句話兩次。
+
+### 助理怎麼被通知：`agentWatch`
+
+`messages:agentWatch`（要 `permAgent`）是**還沒到達助理**的那些列，一列一個事件，最舊的在前：
+
+| `type` | 什麼時候出現 | 附帶 |
+| --- | --- | --- |
+| `userMessage` | 有人說話（`role: "user"`、沒有 `readAt`） | `account`、`text`、`messageId`、`at` |
+| `commandResult` | 指令走到結局（`executed` / `proposed` / `failed`，沒有 `readAt`） | 再加 `status`、`result`、`command` |
+
+沒有 webhook，但也**不需要輪詢**：listener 用 Convex 的 WebSocket 訂閱這個 query，有人送訊息或瀏覽器回報結果時 Convex 直接推過來（本地實測 wake latency ~50ms），listener 標已讀、把事件印成 JSON、然後結束程序——「程序結束」就是通知。`account` 參數把 feed 縮到一條對話，讓正在對談的 sub-agent 只等自己這位使用者。已經 `handled` 的列不算事件，所以這個欄位加上來之前的舊訊息不會突然把人叫起來。
 
 ### 指令：五種形狀，一律用 key 指涉
 
@@ -251,12 +271,14 @@ key 與 code 的解析在**前端**做（`src/lib/assistant.ts` 的 `resolveComm
 | `messages:thread` | query | `permRead` | 自己的整條對話（前端的訂閱來源） |
 | `messages:claim` | mutation | `permRead` | 原子性地認領一則 `pending` 指令，回 `{ claimed }` |
 | `messages:report` | mutation | `permRead` | 回報結果：`executed` / `proposed` / `failed` ＋原因 |
+| `messages:agentWatch` | query | `permAgent` | 還沒到達助理的事件（可帶 `account` 只看一條對話）——listener 訂閱的就是它 |
 | `messages:agentInbox` | query | `permAgent` | 每一條「有事情等著」的對話：新訊息數、在飛的指令數、待讀結果數 |
-| `messages:agentRead` | query | `permAgent` | 讀某個帳號的整條對話（含 `handled`） |
+| `messages:agentRead` | query | `permAgent` | 讀某個帳號的整條對話（含 `readAt`、`handled`） |
 | `messages:agentReply` | mutation | `permAgent` | 回一句話（進來就是 handled） |
 | `messages:agentCommand` | mutation | `permAgent` | 下一條指令（`description` ＋ `command`） |
-| `messages:agentMarkHandled` | mutation | `permAgent` | 「這條對話我都讀完了」。**還在飛的指令不會被清掉** |
+| `messages:agentMarkRead` | mutation | `permAgent` | 標已讀並認領（收 `messageIds`，回真正標到的 id） |
+| `messages:agentMarkHandled` | mutation | `permAgent` | 「這條對話我處理完了」。**還在飛的指令不會被清掉**，順手補上 `readAt` |
 
-助理那半邊是**公開函式**而不是 internal，因為它跑在沒有 Convex 憑證的容器裡：它跟瀏覽器一樣送 `{ account, tokenHash }`，直接打 `POST /api/query` 與 `/api/mutation`。做法與紅線寫在 `.claude/skills/board-assistant/SKILL.md`。**憑證不進版控**——那份 skill 只說從環境變數讀，沒有寫任何 hash。
+助理那半邊是**公開函式**而不是 internal，因為它跑在沒有 Convex 憑證的容器裡：它跟瀏覽器一樣送 `{ account, tokenHash }`——一次性的呼叫打 `POST /api/query` 與 `/api/mutation`，等訊息的時候用 Convex 的 WebSocket 訂閱 `agentWatch`。做法與紅線寫在 `.claude/skills/board-assistant/SKILL.md`。**憑證不進版控**——那份 skill 只說從環境變數讀，沒有寫任何 hash。
 
 `claim` 是獨立的 mutation，這是整個機制唯一真正微妙的地方：Convex 的 mutation 是可序列化的交易，所以兩個分頁讀到同一則 `pending` 時只有一個拿到 `claimed: true`。把它塞進執行器的「讀對話→執行」裡就會有一段兩邊都以為指令是自己的空窗，使用者會看到卡片被移兩次——或者兩筆提議要審。

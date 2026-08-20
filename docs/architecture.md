@@ -14,9 +14,10 @@ convex/
   editRequests.ts    編輯提議：合併寫入、board:get 的疊加、diff 描述，
                      以及 list / mine / withdraw / approve / dismiss
   messages.ts        看板助理的聊天：使用者那半邊（send / thread / claim / report，
-                     要 permRead）與助理那半邊（agentInbox / agentRead / agentReply /
-                     agentCommand / agentMarkHandled，要 permAgent）。
-                     指令只是一則訊息，看板由使用者的瀏覽器去改
+                     要 permRead）與助理那半邊（agentWatch / agentInbox / agentRead /
+                     agentReply / agentCommand / agentMarkRead / agentMarkHandled，
+                     要 permAgent）。指令只是一則訊息，看板由使用者的瀏覽器去改；
+                     agentWatch 是助理 WebSocket 訂閱的「還沒讀到的事件」
   auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
                      requireEdit / requirePermission、login / register /
                      pendingUsers / approve / dismiss，以及 internal 的
@@ -62,8 +63,10 @@ docs/                本目錄：資料模型、專案結構、進度
 .claude/skills/
   jira-board-import/ 從 Jira 匯入的 skill；匯入／週次／狀態對應腳本在它的 scripts/，
                      payload 格式與更新看板資料的說明在它的 references/
-  board-assistant/   當看板助理的 skill：憑證從環境變數來、輪詢方式、指令格式、
-                     結果狀態機與紅線；scripts/agent-call.mjs 是一次 HTTP 呼叫
+  board-assistant/   當看板助理的 skill：憑證從環境變數來、main agent／sub-agent
+                     的分工、指令格式、結果狀態機與紅線；
+                     scripts/agent-call.mjs 是一次 HTTP 呼叫，
+                     scripts/listen.mjs 是「阻塞到有事發生就結束」的 WebSocket listener
 ```
 
 `convex/_generated/` 有進版控，所以剛 clone 下來不需要先登入 Convex 就能 `npm run build`。
@@ -108,9 +111,13 @@ docs/                本目錄：資料模型、專案結構、進度
 
 **未讀紅點是時間比較，不是計數器。** 視窗關著時最後一則助理訊息比「上次看到」新就亮點，`kanban.chat.seen.v1` 依帳號記在 localStorage（`src/lib/assistant.ts`）。指令訊息在視窗裡顯示助理寫的那句人話、底下一行小字的指令摘要，以及狀態徽章（等待執行／執行中／已執行／已建立提議／失敗），失敗時多一塊寫著原因的紅框——那句原因就是助理接下來要讀的東西。
 
+**「已讀」是後端的 `readAt`，不是前端猜的。** 使用者自己的泡泡底下那一行小字只在 `message.readAt` 存在時出現；寫它的是助理的 listener（收到事件的同一瞬間呼叫 `messages:agentMarkRead`），而 `messages:thread` 是 subscription，所以訊息送出時沒有標示、助理讀到的那一刻反應式地長出來。這是使用者唯一看得出「助理真的在值班」的訊號，所以刻意做得低調（`text-[10px]` 的灰字，靠右）但即時。語意（read ≠ handled）在 data-model.md。
+
 **FAB 與視窗都在 `z-40`**，刻意低於暫存區與 dialog（`z-50`）：拖曳到一半時聊天泡泡不該蓋住暫存區。`BoardAssistant` 也掛在 `DndContext` 外面——它跟拖曳無關，而且卡片還在空中時執行器得繼續跑。
 
-助理端是**公開函式**（要 `permAgent`），因為它跑在沒有 Convex 憑證的容器裡：跟瀏覽器一樣送 `{ account, tokenHash }`，直接 `POST /api/query`、`/api/mutation`。輪詢方式、指令範例與紅線在 `.claude/skills/board-assistant/SKILL.md`；**憑證只從環境變數來，不進版控**。
+助理端是**公開函式**（要 `permAgent`），因為它跑在沒有 Convex 憑證的容器裡：跟瀏覽器一樣送 `{ account, tokenHash }`，一次性呼叫走 `POST /api/query`、`/api/mutation`。指令範例與紅線在 `.claude/skills/board-assistant/SKILL.md`；**憑證只從環境變數來，不進版控**。
+
+**助理不輪詢，它被推。** 等訊息的那一半是 `scripts/listen.mjs`：用 `convex` 套件的 `ConvexClient`（Node 22 有內建的 `WebSocket`，不需要額外依賴）訂閱 `messages:agentWatch`，阻塞到有事件為止，然後標已讀、把事件印成 JSON、**結束程序**。「程序結束」就是通知——main agent 把它丟到背景 task，訊息一到就被喚醒（本地實測 ~50ms），不用 `sleep` 迴圈。事件有兩種（`userMessage`、`commandResult`），所以「等使用者下一句」與「等指令跑完」是同一個機制；`--account` 把 feed 縮到一條對話，`--exclude` 把已經派給 sub-agent 的對話讓出去。多個 listener 同時等也不會撞：`agentMarkRead` 回傳它**真正標到**的 id，沒標到的那個就繼續等（認領語意是 mutation 交易免費給的）。分工是 main agent 只負責等與派工、一條對話一個 sub-agent，寫在 skill 的「The duty loop」。
 
 ## 時間區間與 lazy loading
 

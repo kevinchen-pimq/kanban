@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, type QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   cleanAccount,
   credentialsValidator,
@@ -38,12 +38,21 @@ import {
  *   interesting one: it is a separate mutation purely so that marking a command
  *   as "mine to run" is one atomic step, which is what keeps two open tabs from
  *   executing it twice.
- * - **The agent's side** (`agentInbox` / `agentRead` / `agentReply` /
- *   `agentCommand` / `agentMarkHandled`), all behind `permAgent`. They are public
- *   functions because the agent runs in a container with no Convex credentials at
- *   all: it authenticates the same way the browser does, by sending
- *   `{ account, tokenHash }`, over plain HTTP against `/api/query` and
- *   `/api/mutation` (see `.claude/skills/board-assistant/SKILL.md`).
+ * - **The agent's side** (`agentInbox` / `agentWatch` / `agentRead` /
+ *   `agentReply` / `agentCommand` / `agentMarkRead` / `agentMarkHandled`), all
+ *   behind `permAgent`. They are public functions because the agent runs in a
+ *   container with no Convex credentials at all: it authenticates the same way the
+ *   browser does, by sending `{ account, tokenHash }` — over a WebSocket when it
+ *   is waiting for something (`agentWatch`, see `scripts/listen.mjs`) and over
+ *   plain HTTP `/api/query` and `/api/mutation` otherwise (see
+ *   `.claude/skills/board-assistant/SKILL.md`).
+ *
+ * Two flags track the agent's attention, and they are deliberately not one:
+ * `readAt` is stamped the instant a row reaches the agent (that is what the chat
+ * window shows as 「已讀」, and what keeps a listener from waking twice on the same
+ * event), while `handled` means the agent is *done* with it and drops the row out
+ * of the inbox. A question is read in under a second and stays unhandled for as
+ * long as the conversation runs.
  *
  * `permAgent` is a narrow permission and is meant to stay narrow. An assistant
  * account holds it plus `permRead` — enough to read the board it is discussing and
@@ -126,6 +135,25 @@ function inFlight(message: Doc<"messages">): boolean {
   return message.status === "pending" || message.status === "running";
 }
 
+/**
+ * What kind of event this row is for the agent, or `null` if it is not one.
+ *
+ * Two things are worth waking an agent for: somebody said something, and a
+ * command reached its ending (whichever ending). Everything else in a thread is
+ * the agent's own words or a command still in flight. `readAt` is the "already
+ * delivered" mark, so a listener that stamps what it reports never reports it
+ * twice; `handled` is checked too, so threads finished before this field existed
+ * cannot wake anybody.
+ */
+function eventKind(
+  message: Doc<"messages">,
+): "userMessage" | "commandResult" | null {
+  if (message.handled || message.readAt !== undefined) return null;
+  if (message.role === "user") return "userMessage";
+  if (message.command && !inFlight(message)) return "commandResult";
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Public — the browser's half
 // ---------------------------------------------------------------------------
@@ -138,6 +166,8 @@ const messageValidator = v.object({
   command: v.optional(commandValidator),
   status: v.optional(commandStatusValidator),
   result: v.optional(v.string()),
+  /** Set once the assistant has picked this up — the 「已讀」 mark. */
+  readAt: v.optional(v.number()),
 });
 
 function toView(message: Doc<"messages">) {
@@ -149,6 +179,7 @@ function toView(message: Doc<"messages">) {
     command: message.command,
     status: message.status,
     result: message.result,
+    readAt: message.readAt,
   };
 }
 
@@ -282,10 +313,12 @@ export const report = mutation({
 /**
  * Every thread with something waiting for the agent, newest activity first.
  *
- * This is the poll target: one cheap query that answers "is there anything to do,
- * and where". Three counts, because they call for different things — a new
- * question needs an answer, a command in flight needs patience, and a settled
- * command needs its result read (especially a failed one).
+ * One cheap query that answers "is there anything to do, and where". Three counts,
+ * because they call for different things — a new question needs an answer, a
+ * command in flight needs patience, and a settled command needs its result read
+ * (especially a failed one). Waiting for work is `agentWatch`'s job, not this
+ * one's; use this for a status glance, or as a fallback where a WebSocket cannot
+ * be opened.
  */
 export const agentInbox = query({
   args: { auth: credentialsValidator },
@@ -341,6 +374,113 @@ export const agentInbox = query({
 });
 
 /**
+ * What the agent has not seen yet, oldest first — the subscription a listener
+ * blocks on.
+ *
+ * This is `agentInbox`'s detail view and the reason the agent does not have to
+ * poll: `scripts/listen.mjs` opens a WebSocket on this query, and Convex pushes an
+ * update the moment somebody sends a message or a browser reports a command's
+ * result. The rows carry everything the agent needs to act, so waking up costs no
+ * follow-up query.
+ *
+ * Two event kinds, tagged in the row: a `userMessage` wants an answer, a
+ * `commandResult` is the ending of something the agent asked for (including
+ * `failed`, which is the one it most needs to read). Rows leave this feed when the
+ * agent stamps them with `agentMarkRead`, which the listener does the instant it
+ * reports them — and because that stamp answers with what it actually claimed, an
+ * event is handled by exactly one listener even when several are waiting.
+ *
+ * `account` narrows the feed to one thread, which is what a sub-agent in the
+ * middle of a conversation wants: it waits for *its* person's next sentence, not
+ * for somebody else's.
+ */
+export const agentWatch = query({
+  args: { auth: credentialsValidator, account: v.optional(v.string()) },
+  returns: v.array(
+    v.object({
+      type: v.union(v.literal("userMessage"), v.literal("commandResult")),
+      messageId: v.id("messages"),
+      account: v.string(),
+      at: v.number(),
+      /** The person's words, or — on a command — the agent's own description. */
+      text: v.string(),
+      command: v.optional(commandValidator),
+      status: v.optional(commandStatusValidator),
+      result: v.optional(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    await requireAgent(ctx, args.auth);
+
+    const account =
+      args.account === undefined
+        ? undefined
+        : (await requireAccount(ctx, args.account)).account;
+
+    const waiting = await ctx.db
+      .query("messages")
+      .withIndex("by_handled", (q) => q.eq("handled", false))
+      .take(INBOX_LIMIT);
+
+    return waiting
+      .filter((message) => account === undefined || message.account === account)
+      .flatMap((message) => {
+        const type = eventKind(message);
+        if (!type) return [];
+        return [
+          {
+            type,
+            messageId: message._id,
+            account: message.account,
+            at: message._creationTime,
+            text: message.text,
+            command: message.command,
+            status: message.status,
+            result: message.result,
+          },
+        ];
+      })
+      .sort((a, b) => a.at - b.at);
+  },
+});
+
+/**
+ * "These have reached me" — the 「已讀」 stamp, by message id.
+ *
+ * Ids rather than a whole thread on purpose: a listener stamps exactly the rows it
+ * is about to report, so a message that arrives in the gap between the snapshot
+ * and this call stays unread and wakes the next listener instead of being silently
+ * marked as seen.
+ *
+ * It answers with the rows it actually stamped, and that is what makes several
+ * listeners safe: a mutation is a transaction, so of two agents waking on the same
+ * message exactly one finds it unstamped and gets the id back. The other gets an
+ * empty answer and goes back to waiting rather than handling the same sentence
+ * twice. It also means the 「已讀」 the person sees is the first arrival, not the
+ * last.
+ */
+export const agentMarkRead = mutation({
+  args: {
+    auth: credentialsValidator,
+    messageIds: v.array(v.id("messages")),
+  },
+  returns: v.object({ marked: v.array(v.id("messages")) }),
+  handler: async (ctx, args) => {
+    await requireAgent(ctx, args.auth);
+
+    const now = Date.now();
+    const marked: Id<"messages">[] = [];
+    for (const messageId of args.messageIds) {
+      const message = await ctx.db.get(messageId);
+      if (!message || message.readAt !== undefined) continue;
+      await ctx.db.patch(message._id, { readAt: now });
+      marked.push(message._id);
+    }
+    return { marked };
+  },
+});
+
+/**
  * One whole conversation, oldest first — including whether each row is still
  * waiting for the agent, so a poll can tell new from already-answered.
  */
@@ -359,6 +499,7 @@ export const agentRead = query({
       command: v.optional(commandValidator),
       status: v.optional(commandStatusValidator),
       result: v.optional(v.string()),
+      readAt: v.optional(v.number()),
       handled: v.boolean(),
     }),
   ),
@@ -379,6 +520,7 @@ export const agentRead = query({
       command: message.command,
       status: message.status,
       result: message.result,
+      readAt: message.readAt,
       handled: message.handled,
     }));
   },
@@ -448,6 +590,10 @@ export const agentCommand = mutation({
  * would drop the one thing the agent posted them for. Call it after answering and
  * after reading the results, and the inbox goes quiet until the person says
  * something else.
+ *
+ * Anything it clears is stamped read as well if it was not already: being done
+ * with a message implies having seen it, and a thread finished without a listener
+ * (a plain HTTP session) should still show the person their 「已讀」.
  */
 export const agentMarkHandled = mutation({
   args: { auth: credentialsValidator, account: v.string() },
@@ -458,6 +604,7 @@ export const agentMarkHandled = mutation({
     const user = await requireAccount(ctx, args.account);
     const messages = await threadFor(ctx, user.account, THREAD_LIMIT);
 
+    const now = Date.now();
     let marked = 0;
     let stillInFlight = 0;
     for (const message of messages) {
@@ -466,7 +613,10 @@ export const agentMarkHandled = mutation({
         stillInFlight++;
         continue;
       }
-      await ctx.db.patch(message._id, { handled: true });
+      await ctx.db.patch(message._id, {
+        handled: true,
+        readAt: message.readAt ?? now,
+      });
       marked++;
     }
     return { marked, stillInFlight };

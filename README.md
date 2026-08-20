@@ -14,7 +14,7 @@ Jira 的看板以狀態為欄，回答的是「這張票現在在哪個階段」
 
 看板前面有一層簡單的帳號密碼登入：讀看板要 `permRead`，編輯要 `permWrite`，只有 `permEditRequest` 的人也能操作看板，但每個編輯會變成一筆待審核的提議，註冊之後要有權限的人按通過才進得來（見 [docs/data-model.md](docs/data-model.md) 的「登入與權限」與「編輯提議」）。
 
-右下角有一個**聊天助理**：用講話的方式問看板的事、請它幫你改卡片。助理本身改不動看板——它只會下指令，指令是你的瀏覽器用你自己的權限去執行的，所以你能做的它才做得到（見 [docs/data-model.md](docs/data-model.md) 的「看板助理的對話」）。
+右下角有一個**聊天助理**：用講話的方式問看板的事、請它幫你改卡片。助理本身改不動看板——它只會下指令，指令是你的瀏覽器用你自己的權限去執行的，所以你能做的它才做得到。訊息被助理讀到時，你的那句話下面會出現「已讀」（見 [docs/data-model.md](docs/data-model.md) 的「看板助理的對話」）。
 
 ## 在哪裡可以用到
 
@@ -55,6 +55,6 @@ npm run deploy:dev   # 先在 dev deployment 做煙霧測試
 | [docs/architecture.md](docs/architecture.md) | 專案結構與前端實作細節（lazy loading、版面、助理的執行器） |
 | [docs/progress.md](docs/progress.md) | 當前進度與尚未實作的範圍 |
 | [.claude/skills/jira-board-import/](.claude/skills/jira-board-import/SKILL.md) | 從 Jira 匯入 epic 的完整流程；匯入腳本與 [payload 格式／更新看板資料](.claude/skills/jira-board-import/references/updating-board-data.md) 都在這裡 |
-| [.claude/skills/board-assistant/](.claude/skills/board-assistant/SKILL.md) | 當看板助理的 agent 該怎麼做：憑證、輪詢、指令格式與紅線 |
+| [.claude/skills/board-assistant/](.claude/skills/board-assistant/SKILL.md) | 當看板助理的 agent 該怎麼做：憑證、即時監聽（listen.mjs）、派工、指令格式與紅線 |
 
 給 AI Agent 的入口是 [CLAUDE.md](CLAUDE.md) 與 [AGENTS.md](AGENTS.md)。

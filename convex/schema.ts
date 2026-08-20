@@ -314,14 +314,25 @@ export default defineSchema({
     // When a browser claimed this command. A claim that never reported back (the
     // tab was closed mid-flight) goes stale and may be taken over.
     claimedAt: v.optional(v.number()),
-    // Whether the agent has taken this message into account. User messages
-    // arrive `false` and are the agent's inbox; its own replies are `true` at
-    // once; its commands stay `false` until it has read the result.
+    // When the agent first *saw* this row, which is not the same as being done
+    // with it: the listener (`scripts/listen.mjs`) stamps it the moment a
+    // message or a command result reaches the agent, and the chat window turns
+    // that into the 「已讀」 mark under the user's own bubble. Absent means "the
+    // agent has not picked this up yet", which is exactly what the listener
+    // subscribes to — so stamping it is also what stops the same event from
+    // waking the next listener again.
+    readAt: v.optional(v.number()),
+    // Whether the agent has *finished* with this message. User messages arrive
+    // `false` and are the agent's inbox; its own replies are `true` at once; its
+    // commands stay `false` until it has read the result. Read and handled are
+    // two different moments — a question is read within a second and handled
+    // when the conversation is over — so they are two fields.
     handled: v.boolean(),
   })
     // The thread, for the browser and for the agent reading one conversation.
     .index("by_account", ["account"])
     // The agent's inbox: everything still waiting for it, across all threads.
+    // Also what the listener subscribes to (unhandled ∩ unread).
     .index("by_handled", ["handled"]),
 
   // Board-wide settings, as a single document (the first row wins).

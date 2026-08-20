@@ -237,10 +237,19 @@ const STATUS_STYLE: Record<
 
 function Message({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
+    // `readAt` is stamped by the assistant's listener the moment the message
+    // reaches it, and `thread` is a subscription — so the mark appears on its own
+    // a moment after sending, which is the only sign the agent is actually on
+    // duty. Deliberately quiet: it is reassurance, not information.
     return (
-      <p className="ml-8 rounded-2xl rounded-br-sm bg-indigo-600 px-3 py-1.5 text-xs leading-relaxed break-words text-white">
-        {message.text}
-      </p>
+      <div className="ml-8 grid justify-items-end gap-0.5">
+        <p className="rounded-2xl rounded-br-sm bg-indigo-600 px-3 py-1.5 text-xs leading-relaxed break-words text-white">
+          {message.text}
+        </p>
+        {message.readAt !== undefined && (
+          <span className="pr-1 text-[10px] text-slate-400">已讀</span>
+        )}
+      </div>
     );
   }
 
