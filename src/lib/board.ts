@@ -1,5 +1,5 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import { formatMonthDay, isBefore } from "./dates";
+import { daysAfter, formatMonthDay, isBefore } from "./dates";
 
 export type Epic = Doc<"epics">;
 export type Checkpoint = Doc<"checkpoints">;
@@ -169,6 +169,45 @@ export function describeCheckpoints(
       subtitle: range ? `Checkpoint (${range})` : "Checkpoint",
     };
   });
+}
+
+/**
+ * What `board:addNextWeek` would create, for the affordance's label.
+ *
+ * The same derivation the server does — the newest week's dates plus seven days,
+ * its number plus one — computed here only so the button can say *which* week it
+ * is going to add. The call itself sends no dates: the row the server writes is
+ * derived there, so a stale board can never talk it into the wrong week.
+ *
+ * Null when the board has no dated week to count on from, which is also when the
+ * affordance should not be offered.
+ */
+export function nextWeekPreview(
+  checkpoints: readonly Checkpoint[],
+): { weekNumber: number; startDate: string; endDate: string } | null {
+  let latest: Checkpoint | undefined;
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.kind !== "week") continue;
+    if (
+      checkpoint.weekNumber === undefined ||
+      !checkpoint.startDate ||
+      !checkpoint.endDate
+    ) {
+      continue;
+    }
+    if (!latest?.startDate || isBefore(latest.startDate, checkpoint.startDate)) {
+      latest = checkpoint;
+    }
+  }
+
+  if (!latest?.startDate || !latest.endDate || latest.weekNumber === undefined) {
+    return null;
+  }
+  return {
+    weekNumber: latest.weekNumber + 1,
+    startDate: daysAfter(latest.startDate, 7),
+    endDate: daysAfter(latest.endDate, 7),
+  };
 }
 
 /**

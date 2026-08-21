@@ -207,6 +207,171 @@ export const get = query({
   },
 });
 
+/** Days in one checkpoint row: a week runs Sunday through Saturday. */
+const WEEK_DAYS = 7;
+
+/** A week row that carries everything the next one is derived from. */
+type DatedWeek = Doc<"checkpoints"> & {
+  weekNumber: number;
+  startDate: string;
+  endDate: string;
+};
+
+/**
+ * Shift an ISO date by whole days.
+ *
+ * UTC arithmetic, like `weeksBefore` on the client: a checkpoint date is a
+ * calendar date, and parsing it in a local zone would let a DST boundary land
+ * the result on the wrong day.
+ */
+function shiftIsoDays(iso: string, days: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days))
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * The board's newest week row — the one the next week is derived from.
+ *
+ * Newest by date rather than by `order`, matching how `get` sorts the axis: an
+ * import payload's `order` is not trusted anywhere else either. Rows missing a
+ * number or a date are skipped, because there is nothing to count on from them.
+ */
+async function latestWeek(ctx: MutationCtx): Promise<DatedWeek | null> {
+  const checkpoints = await ctx.db
+    .query("checkpoints")
+    .withIndex("by_order")
+    .take(CHECKPOINT_LIMIT);
+
+  let latest: DatedWeek | null = null;
+  for (const checkpoint of checkpoints) {
+    if (
+      checkpoint.kind !== "week" ||
+      checkpoint.weekNumber === undefined ||
+      checkpoint.startDate === undefined ||
+      checkpoint.endDate === undefined
+    ) {
+      continue;
+    }
+    const week = checkpoint as DatedWeek;
+    if (!latest || latest.startDate < week.startDate) latest = week;
+  }
+  return latest;
+}
+
+/**
+ * Add the week after the board's newest one, so work can be planned ahead.
+ *
+ * The board's rows come from the import payload, which only carries weeks that
+ * already have tickets in them — so the newest row is normally the current week
+ * and there is nowhere to drag next week's work to. This is the one way to grow
+ * the axis forward from the board itself.
+ *
+ * **The dates are derived here, never sent.** `weekNumber` says *which* week the
+ * caller means and nothing more: it has to be the one right after the board's
+ * newest week, and the row's `startDate` / `endDate` are that week's dates
+ * shifted seven days. So a client cannot invent a row whose number and dates
+ * disagree, cannot skip a week to plant a row months out, and the result is
+ * exactly the row an import of that week would have written. `order` follows the
+ * append-at-the-end convention `importBoard` uses for a payload that places no
+ * row explicitly; `get` sorts week rows by date regardless.
+ *
+ * Naming the week is what makes the call **idempotent**, and that is why it is an
+ * argument rather than something derived from scratch: "the week after the newest
+ * one" is a different week each time it succeeds, so a second click would add a
+ * second row. "W34" asked for twice is W34 — the row already there comes back
+ * with `created: false`. A double click, two tabs and a retry after a dropped
+ * response all land on one row. (The guard also gives a stale tab a sensible
+ * answer: the week it is offering already exists, so it gets it, not an error.)
+ *
+ * Requires `requireEdit`, and **applies immediately for `permEditRequest` too**,
+ * rather than becoming a pending proposal. A week row is structure derived from
+ * dates, not content: it holds no titles, no assignees and no opinion about the
+ * work, an empty one is harmless, and it is identical to what the importer would
+ * write. The proposal machinery is built around cards (merge per card, a diff
+ * with a `before` side, an overlay); an empty row has none of that to show, and a
+ * proposer who could not create the row could not propose moving anything into
+ * it either — the affordance would look enabled and do nothing.
+ */
+export const addNextWeek = mutation({
+  args: {
+    auth: credentialsValidator,
+    /**
+     * The week to add, which must be the one right after the board's newest —
+     * an intent, not data: the dates come from the board. See above.
+     */
+    weekNumber: v.number(),
+  },
+  returns: v.object({
+    checkpointId: v.id("checkpoints"),
+    weekNumber: v.number(),
+    /** Absent only for a pre-existing row that an import left undated. */
+    startDate: v.optional(v.string()),
+    endDate: v.optional(v.string()),
+    /** False when that week was already on the board. */
+    created: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    await requireEdit(ctx, args.auth);
+
+    // Already there — a second click, another tab, an import that got here
+    // first. Hand back the row instead of a duplicate or a complaint.
+    const existing = await ctx.db
+      .query("checkpoints")
+      .withIndex("by_kind_and_week", (q) =>
+        q.eq("kind", "week").eq("weekNumber", args.weekNumber),
+      )
+      .first();
+    if (existing) {
+      return {
+        checkpointId: existing._id,
+        weekNumber: args.weekNumber,
+        startDate: existing.startDate,
+        endDate: existing.endDate,
+        created: false,
+      };
+    }
+
+    const latest = await latestWeek(ctx);
+    if (!latest) {
+      throw new Error("看板還沒有任何週次列，先匯入一次資料再預排下一週。");
+    }
+    if (args.weekNumber !== latest.weekNumber + 1) {
+      throw new Error(
+        `只能從最新的 W${latest.weekNumber} 往後加一週，不能直接跳到 ` +
+          `W${args.weekNumber}。重新整理看板後再試一次。`,
+      );
+    }
+
+    // Append at the end, exactly as `importBoard` does for a row the payload
+    // gives no `order` for.
+    const last = await ctx.db
+      .query("checkpoints")
+      .withIndex("by_order")
+      .order("desc")
+      .first();
+
+    const startDate = shiftIsoDays(latest.startDate, WEEK_DAYS);
+    const endDate = shiftIsoDays(latest.endDate, WEEK_DAYS);
+    const checkpointId = await ctx.db.insert("checkpoints", {
+      kind: "week",
+      weekNumber: args.weekNumber,
+      startDate,
+      endDate,
+      order: last ? last.order + 1 : 0,
+    });
+
+    return {
+      checkpointId,
+      weekNumber: args.weekNumber,
+      startDate,
+      endDate,
+      created: true,
+    };
+  },
+});
+
 /**
  * The board's public writes.
  *

@@ -1,6 +1,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { LocateFixed, Plus } from "lucide-react";
+import { Loader2, LocateFixed, Plus } from "lucide-react";
+import { Fragment, useState } from "react";
 
 import { useBoardActions } from "@/components/BoardActionsProvider";
 import { DraggableTicket } from "@/components/DraggableTicket";
@@ -11,11 +12,13 @@ import {
 } from "@/components/ui/tooltip";
 import {
   describeCheckpoints,
+  nextWeekPreview,
   sortCellTickets,
   type Checkpoint,
   type Epic,
   type Ticket,
 } from "@/lib/board";
+import { formatMonthDay } from "@/lib/dates";
 import {
   resolveDropTarget,
   ticketDragData,
@@ -54,6 +57,18 @@ export function BoardMatrix({
 }) {
   const rows = describeCheckpoints(checkpoints, today);
   const hasCurrentWeek = rows.some((row) => row.phase === "current");
+
+  // The affordance for planning ahead sits under the newest week — which is the
+  // last week row, not the last row: the undated backlog pool always comes after
+  // the weeks, and a row for "the week after the backlog" would mean nothing.
+  const preview = nextWeekPreview(checkpoints);
+  let lastWeekIndex = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].checkpoint.kind === "week") {
+      lastWeekIndex = i;
+      break;
+    }
+  }
 
   // Bucket once by cell instead of re-scanning the ticket list per cell.
   const byCell = new Map<string, Ticket[]>();
@@ -123,56 +138,135 @@ export function BoardMatrix({
       </thead>
 
       <tbody>
-        {rows.map((row) => {
+        {rows.map((row, index) => {
           const isCurrent = row.phase === "current";
           return (
-            <tr
-              key={row.checkpoint._id}
-              // Marks the row for today so the board can open scrolled to it.
-              data-current-week={isCurrent || undefined}
-              className={isCurrent ? "bg-indigo-50/20" : "hover:bg-slate-50/50"}
-            >
-              <th
-                scope="row"
-                style={{ width: GUTTER_PX }}
-                className={cn(
-                  "sticky left-0 z-20 border-r border-b border-slate-200 bg-white p-0",
-                  isCurrent && "border-l-4 border-l-indigo-600",
-                )}
+            <Fragment key={row.checkpoint._id}>
+              <tr
+                // Marks the row for today so the board can open scrolled to it.
+                data-current-week={isCurrent || undefined}
+                className={
+                  isCurrent ? "bg-indigo-50/20" : "hover:bg-slate-50/50"
+                }
               >
-                {/* Rotated so the row label costs vertical space, not width.
-                    vertical-rl + rotate-180 reads bottom-to-top, which keeps
-                    the week number at the top of the row. text-orientation
-                    must be sideways: the default leaves CJK glyphs upright,
-                    and rotate-180 would then render them upside down. */}
-                <div className="flex h-full items-center justify-center py-3">
-                  <div className="flex flex-row-reverse items-center gap-2 whitespace-nowrap [text-orientation:sideways] [writing-mode:vertical-rl] rotate-180">
-                    <span className="text-xs font-bold text-slate-800">
-                      {row.title}
-                    </span>
-                    <span className="text-[11px] font-normal text-slate-400">
-                      {row.subtitle}
-                    </span>
-                  </div>
-                </div>
-              </th>
-
-              {epics.map((epic) => (
-                <DropCell
-                  key={epic._id}
-                  checkpointId={row.checkpoint._id}
-                  epicId={epic._id}
-                  tickets={sortCellTickets(
-                    byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? [],
+                <th
+                  scope="row"
+                  style={{ width: GUTTER_PX }}
+                  className={cn(
+                    "sticky left-0 z-20 border-r border-b border-slate-200 bg-white p-0",
+                    isCurrent && "border-l-4 border-l-indigo-600",
                   )}
-                  today={today}
-                />
-              ))}
-            </tr>
+                >
+                  {/* Rotated so the row label costs vertical space, not width.
+                      vertical-rl + rotate-180 reads bottom-to-top, which keeps
+                      the week number at the top of the row. text-orientation
+                      must be sideways: the default leaves CJK glyphs upright,
+                      and rotate-180 would then render them upside down. */}
+                  <div className="flex h-full items-center justify-center py-3">
+                    <div className="flex flex-row-reverse items-center gap-2 whitespace-nowrap [text-orientation:sideways] [writing-mode:vertical-rl] rotate-180">
+                      <span className="text-xs font-bold text-slate-800">
+                        {row.title}
+                      </span>
+                      <span className="text-[11px] font-normal text-slate-400">
+                        {row.subtitle}
+                      </span>
+                    </div>
+                  </div>
+                </th>
+
+                {epics.map((epic) => (
+                  <DropCell
+                    key={epic._id}
+                    checkpointId={row.checkpoint._id}
+                    epicId={epic._id}
+                    tickets={sortCellTickets(
+                      byCell.get(`${row.checkpoint._id}:${epic._id}`) ?? [],
+                    )}
+                    today={today}
+                  />
+                ))}
+              </tr>
+
+              {/* Right after the newest week, so "one more week" is always the
+                  next thing below the last row of work. */}
+              {index === lastWeekIndex && preview && (
+                <AddNextWeekRow preview={preview} colSpan={epics.length + 1} />
+              )}
+            </Fragment>
           );
         })}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * The full-width row under the newest week: "add the week after this one".
+ *
+ * The board's rows come from the import payload, which knows only about weeks
+ * that already have work in them — so without this there is no row to drag next
+ * week's cards into. One click adds it, the matrix grows reactively, and the
+ * affordance re-renders under the new last week, which is what lets the same
+ * gesture reach the week after that.
+ *
+ * The label names the week it would add, derived from the board's own data
+ * (`nextWeekPreview`) rather than written down anywhere, and the call asks for
+ * exactly that week — no dates, those are the server's. Asking by name is what
+ * makes it idempotent, so neither a double click nor a second tab can turn one
+ * intention into two rows; the button also stays disabled for the round trip.
+ *
+ * Absent for a read-only account, like every other editing affordance. An account
+ * that may only *propose* edits does see it: the row it creates is derived
+ * structure rather than content, and it applies straight away (see
+ * `board:addNextWeek`). Cards dragged into the new row are proposals as usual.
+ */
+function AddNextWeekRow({
+  preview,
+  colSpan,
+}: {
+  preview: { weekNumber: number; startDate: string; endDate: string };
+  colSpan: number;
+}) {
+  const { canEdit, addNextWeek } = useBoardActions();
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canEdit) return null;
+
+  const range = `${formatMonthDay(preview.startDate)} - ${formatMonthDay(preview.endDate)}`;
+
+  return (
+    <tr>
+      <td colSpan={colSpan} className="border-b border-slate-200 p-0">
+        <button
+          type="button"
+          disabled={adding}
+          onClick={() => {
+            setAdding(true);
+            setError(null);
+            void addNextWeek(preview.weekNumber)
+              .catch((caught: unknown) => {
+                setError(
+                  caught instanceof Error ? caught.message : String(caught),
+                );
+              })
+              .finally(() => setAdding(false));
+          }}
+          title={`在看板最後加上 W${preview.weekNumber} 這一列`}
+          className="flex w-full items-center justify-center gap-1.5 py-2 text-xs text-slate-400 transition hover:bg-slate-50 hover:text-indigo-600 disabled:pointer-events-none disabled:opacity-60"
+        >
+          {adding ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Plus className="size-3.5" aria-hidden />
+          )}
+          預排 W{preview.weekNumber}（{range}）
+        </button>
+        {error && (
+          <p className="px-3 pb-2 text-center text-xs text-rose-600">{error}</p>
+        )}
+      </td>
+    </tr>
   );
 }
 

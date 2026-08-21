@@ -1,6 +1,6 @@
 # 當前進度
 
-_更新於 2026-08-20。_
+_更新於 2026-08-21。_
 
 ## 已完成
 
@@ -76,6 +76,15 @@ _更新於 2026-08-20。_
   對話不會被放生）。sub-agent 則自己用 `--account` 監看它那條對話的後續訊息，結束時
   `agentMarkHandled` 並回報。判定只讀 `readAt`，所以後端沒有任何改動。skill 也明文
   寫了助理**可讀** Jira／GitHub PR、**不可寫**（不 transition、不留言、不 merge）。
+- **預排下週（`board:addNextWeek`）**：最後一個週次列下面有一條低調的整寬列
+  「＋ 預排 W34（08/23 - 08/29）」，標籤由看板資料推導，按一下就長出那一列，
+  affordance 跟著移到新列下面（所以可以一直往後排）。**日期由伺服器從最新週次
+  推導**（各 +7 天、週次 +1），前端只送「哪一週」——這也是幂等的來源：連點兩下或
+  兩個分頁同時按都只長一列，跳週的請求會被拒絕。新列對拖曳（含暫存區）、編輯
+  modal 的週次下拉都是透明的；「回到本週」仍然指含今天的那一列。唯讀帳號看不到
+  這個 affordance，**只有 `permEditRequest` 的人是直接建立、不轉成提議**（週次列是
+  日期推導的結構而不是內容，理由見 data-model.md），把卡片拖進新列照舊變提議。
+  重新匯入不會刪掉這些列（`importBoard` 對 checkpoints 只 upsert）。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
   當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`）

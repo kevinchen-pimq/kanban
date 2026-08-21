@@ -8,6 +8,8 @@ convex/
   board.ts           board:get — 依時間區間回傳看板（含 config）的單一 reactive query
                      board:moveTicket / reorderCell / createTicket / updateTicket /
                      deleteTicket — 看板的公開寫入面
+                     board:addNextWeek — 在最新週次後面加一列（預排下週）；日期在這裡
+                     推導，提議權的人也是直接建立
                      每個 handler 第一行是 requireRead / requireEdit，寫入權直接套用、
                      只有提議權就轉成 editRequests
   apply.ts           所有對 tickets 的真實寫入（直接寫入與核准提議共用同一份）
@@ -141,6 +143,19 @@ docs/                本目錄：資料模型、專案結構、進度
 - **入口是按鈕，不只是捲動手勢**：看板初次繪製時 `scrollTop` 已經是 0，此時往上滑不會觸發 `scroll` 事件，單靠捲動偵測會讓讀者完全載不到更早的週次。所以頂端那一列是可點的按鈕，捲動偵測只是額外的便利路徑。
 - **維持捲動位置**：往上補列會讓 `scrollHeight` 變大，若不處理，讀者會被推到頁面下方。所以在請求前記下「距底距離」，DOM 更新後用 `useLayoutEffect` 還原，原本在看的那幾列就留在原處。
 - **不閃白**：Convex 的 `useQuery` 在參數改變時會先回 `undefined`。直接用會讓整個看板在載入更早週次時消失一瞬間，所以保留上一次的結果繼續畫，只在頂端顯示載入中。
+
+## 預排下週：把週次軸往後長
+
+Lazy loading 讓週次軸往**過去**長，`addNextWeek` 讓它往**未來**長。匯入的 payload 只帶已經有工單的週次，所以最新一列通常就是當週，沒有格子可以放下週的工作。
+
+最後一個**週次**列下面有一條低調的整寬列：`＋ 預排 W34（08/23 - 08/29）`。四個實作細節：
+
+- **位置是「最後一個週次列」，不是「最後一列」。** 沒有日期的 backlog 列永遠排在週次之後，而「backlog 的下一週」沒有意義，所以 `BoardMatrix` 找的是最後一個 `kind === "week"` 的列，把 affordance 插在它和 backlog 之間。
+- **標籤是推導的，不是寫死的。** `nextWeekPreview()`（`src/lib/board.ts`）拿看板最新週次的日期各 +7 天、號碼 +1，只為了讓按鈕說得出**要加哪一週**。呼叫時**只送這個號碼、不送日期**——列上的日期是 `board:addNextWeek` 自己推的（見 data-model.md）。送號碼正是幂等的來源：連點兩下、兩個分頁同時按，都只會長出一列。按鈕在 round trip 期間也是 disabled 的。
+- **新列反應式出現，affordance 跟著往下移。** `board:get` 是同一個訂閱，所以新列自己畫出來，affordance 重新算之後落在新的最後一列下面——同一個手勢因此天然可以再往後排一週。這裡**沒有樂觀更新**：加一列時沒有任何手勢正在進行，等一趟 round trip 不痛，而只有伺服器知道要寫哪些日期。
+- **唯讀帳號看不到它**（`canEdit`），跟其他編輯 affordance 一致。只有提議權的帳號**看得到而且真的能按**——建列是直接生效的，不變成提議（理由見 data-model.md）；把卡片拖進新列則照舊變成一筆提議。
+
+新列對其他功能是透明的：拖曳的 drop 目標、編輯 modal 的週次下拉、暫存區流程都是從 `board:get` 的 `checkpoints` 長出來的，所以不需要為它多加程式碼。「回到本週」也不受影響——**本週是含今天的那一列，不是最新的那一列**（`describeCheckpoints` 用今天的日期判斷 phase），所以預排了幾週之後按下去還是停在當週。
 
 ## 版面
 

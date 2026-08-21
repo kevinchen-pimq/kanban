@@ -61,6 +61,7 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 改前端（lazy loading、版面）或找檔案 | `docs/architecture.md` |
 | 開帳號、給／收權限、看登入怎麼運作 | `docs/data-model.md` 的「登入與權限」 |
 | 動編輯提議（提議、合併、疊加、審核） | `docs/data-model.md` 的「編輯提議」＋ `docs/architecture.md` 同名章節 |
+| 動預排下週（新增週次列的 affordance 與推導） | `docs/data-model.md` 與 `docs/architecture.md` 的「預排下週」 |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
 | 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來、等訊息用 `scripts/listen.mjs`） |
@@ -99,8 +100,8 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   `requireRead` / `requireWrite` / `requireEdit` /
   `requirePermission(..., "permApproveRegister" | "permAgent")`。
   讀（`board:get`）要 `permRead`，寫（`board:moveTicket` / `reorderCell` /
-  `createTicket` / `updateTicket` / `deleteTicket`）要 `permWrite` 或
-  `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`；
+  `createTicket` / `updateTicket` / `deleteTicket` / `addNextWeek`）要 `permWrite`
+  或 `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`；
   唯一不收憑證的
   是 `staticHosting:getCurrentDeployment`（只有部署資訊，登入頁也要能提示更新）。
   **認證過不等於可信任**，欄位驗證照樣要跟匯入一樣嚴（標題非空、ISO 日期、PR
@@ -115,6 +116,9 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   （同一張卡的多次操作合併成一筆）。前端不分岔，樂觀更新也不分岔——要改編輯行為
   就改 `convex/board.ts` 的那個分岔，不要在 UI 裡再開一條路。真實寫入只住在
   `convex/apply.ts`，核准提議跟直接寫入共用它，所以兩邊結果永遠一致。
+  **唯一的例外是 `addNextWeek`**（預排下週）：週次列是日期推導的結構而不是內容，
+  所以 `permEditRequest` 的人也是直接建立，不轉成提議（理由與幂等設計見
+  `docs/data-model.md` 的「預排下週」）。要再開這種例外前先把理由寫進文件。
 - **看板助理只碰訊息，永遠不直接寫看板。** 助理帳號拿 `permRead + permAgent`，
   能叫的只有 `messages:agent*` 與 `board:get`；要改看板就用 `agentCommand` 下一條
   指令（卡片一律用 **key** 指涉），由使用者的瀏覽器（`useCommandExecutor`）拿使用者
