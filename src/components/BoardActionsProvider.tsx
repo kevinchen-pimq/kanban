@@ -43,6 +43,19 @@ export type BoardActions = {
   requestMode: boolean;
   /** Take back the pending request on a card. Only meaningful in request mode. */
   withdrawRequest: (ticket: Ticket) => Promise<void>;
+  /**
+   * Add the week after the board's newest one, so work can be planned ahead.
+   *
+   * Takes the week number the affordance is offering — the same number it puts
+   * on the button — which is what makes a double click add one row rather than
+   * two; the dates are the server's to derive. See `board:addNextWeek`.
+   *
+   * Travels with the actions for the same reason `canEdit` does: the affordance
+   * that calls it lives in the matrix, several levels down. Unlike the card
+   * edits it applies for a proposing account too — a week row is derived
+   * structure rather than content.
+   */
+  addNextWeek: (weekNumber: number) => Promise<void>;
 };
 
 const noop: BoardActions = {
@@ -53,6 +66,7 @@ const noop: BoardActions = {
   canEdit: false,
   requestMode: false,
   withdrawRequest: async () => {},
+  addNextWeek: async () => {},
 };
 
 const BoardActionsContext = createContext<BoardActions>(noop);

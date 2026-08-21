@@ -36,11 +36,16 @@ export function isBefore(a: string, b: string): boolean {
 }
 
 /**
- * Shift an ISO date back by whole weeks. Built on UTC arithmetic so a DST
- * boundary cannot move the result onto the wrong day.
+ * Shift an ISO date by whole days. Built on UTC arithmetic so a DST boundary
+ * cannot move the result onto the wrong day.
  */
-export function weeksBefore(iso: string, weeks: number): string {
+export function daysAfter(iso: string, days: number): string {
   const [year, month, day] = iso.split("-").map(Number);
-  const shifted = new Date(Date.UTC(year, month - 1, day - weeks * 7));
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
   return shifted.toISOString().slice(0, 10);
+}
+
+/** Shift an ISO date back by whole weeks. */
+export function weeksBefore(iso: string, weeks: number): string {
+  return daysAfter(iso, -weeks * 7);
 }

@@ -175,6 +175,7 @@ export function BoardApp() {
       }
     },
   );
+  const addNextWeek = useMutation(api.board.addNextWeek);
   const createTicket = useMutation(api.board.createTicket);
   const updateTicket = useMutation(api.board.updateTicket);
   const deleteTicket = useMutation(api.board.deleteTicket);
@@ -495,8 +496,15 @@ export function BoardApp() {
         const requestId = ticket.pendingEdit?.requestId;
         if (requestId) await withdrawRequest({ auth, requestId });
       },
+      // No optimistic update: nothing is mid-gesture when a row is added, so
+      // waiting one round trip for the real row costs nothing — and only the
+      // server knows the dates that go on it.
+      addNextWeek: async (weekNumber) => {
+        await addNextWeek({ auth, weekNumber });
+      },
     }),
     [
+      addNextWeek,
       auth,
       board?.checkpoints,
       canEdit,

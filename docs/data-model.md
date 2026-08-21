@@ -137,12 +137,49 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `createTicket` | 直接在看板上開卡 | 標題非空、ISO 日期、PR 必須是 http(s) 網址、key 唯一且不含空白；epic 與 checkpoint 必須存在 |
 | `updateTicket` | 改標題／狀態／週次／負責人／日期／標籤／PR | 同上的欄位檢查；**不收 `epicId` 與 `key`**，所以改不動 |
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
+| `addNextWeek` | 在最新週次後面加一列（預排下週） | 只收「哪一週」，日期由伺服器推導；必須剛好是最新週次 +1；該週已存在就直接回傳（見下一小節） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面五個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面六個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
 **payload 仍然是事實來源。** 在看板上做的修改不會回寫 Jira，也不比 payload 權威：對某個 epic 做一次完整重新匯入時，`title` / `status` / `assignee` / `dueDate` / `tag` / `githubPrs` 與所在週次都會被 payload 蓋回去；帶 `pruneEpics` 的匯入還會**刪掉** payload 沒有提到的卡片——包含在看板上手動建立的那些（`LOCAL-*`）。要保留手動的調整，就把它寫進 payload。
+
+### 預排下週：`addNextWeek`
+
+匯入的 payload 只帶「已經有工單的週次」，所以看板最新一列通常就是當週，沒有地方
+可以放下週的工作。`board:addNextWeek` 是**從看板本身**把週次軸往後長的唯一入口。
+
+**日期不從前端來。** 呼叫端只送 `weekNumber`——「我要的是哪一週」——而且它必須剛好
+是看板最新週次 +1；列上的 `startDate` / `endDate` 是那一週的日期各 +7 天（週日到
+週六），`weekNumber` 是 +1。所以前端不可能造出一列「號碼和日期對不上」的週次，也
+不可能跳過幾週在幾個月後插一列，結果跟「拿 `npm run week` 算出來的那一週去匯入」
+完全一樣。`order` 沿用 `importBoard` 對沒指定 `order` 的列的做法（接在最後），而
+`board:get` 反正是**照日期**排週次列的。
+
+**為什麼要收 `weekNumber`：那正是幂等的來源。** 「最新那一週的下一週」每次成功之後
+都指向不同的一週，所以純推導的版本按兩下會長出兩列。指名 W34 兩次就還是 W34——已經
+在的那一列帶著 `created: false` 回來。連點、兩個分頁、送出後沒收到回應的重試，全部
+落在同一列上。順帶把過期分頁也處理好了：它提議的那一週已經存在，所以它拿到那一列，
+不是一個錯誤。
+
+**權限是 `requireEdit`，而且 `permEditRequest` 也是直接建立，不變成提議。** 理由：
+
+- 週次列是**由日期推導出來的結構，不是內容**。它沒有標題、沒有負責人、對工作本身
+  沒有任何主張，空的一列無害，而且跟匯入會寫出來的那一列一模一樣。
+- 提議機制整套是繞著**卡片**長出來的（一張卡一筆、`before` 當 diff 左邊、疊加到
+  提議者自己的看板）。一列空的週次沒有 diff 可看、沒有東西可以疊加。
+- 反過來說，如果只有 `permEditRequest` 的人建不了這一列，他也沒辦法提議把卡片搬
+  進去——按鈕看起來能按，按了卻什麼也沒發生。
+
+唯讀帳號兩邊都擋：前端不顯示這個 affordance，後端 `requireEdit` 直接丟
+`AUTH_DENIED`。
+
+**重新匯入不會刪掉預排的列。** `importBoard` 對 checkpoints 只做 upsert，從來不刪；
+`pruneEpics` 刪的是**卡片**，不是列。所以預排出來的 W34 在之後的匯入之後還在，裡面
+的卡片也不會孤兒化。（卡片**落在哪一週**仍然是 payload 說了算——把卡片拖進 W34 之後
+重新匯入一份還說它在 W33 的 payload，它會被搬回 W33。這是既有的「payload 是事實
+來源」語意，不是這個功能帶來的。）
 
 ### 卡片不能換 Epic，也不能改 key
 
