@@ -20,15 +20,19 @@ import type { Doc } from "./_generated/dataModel";
  * the deliberate trade for not building sessions, rotation or revocation. See
  * `docs/data-model.md`.
  *
- * Four independent permissions, all false on registration:
+ * Five independent permissions, all false on registration:
  *
  * - `permRead` — read the board. False means "registered, awaiting approval".
  * - `permWrite` — edit it (drag, create, update, delete, status).
  * - `permApproveRegister` — see and act on pending registrations.
  * - `permEditRequest` — use every editing affordance, but as a *proposal*: the
  *   write becomes an `editRequests` row for a `permWrite` account to approve.
+ * - `permAgent` — be the board assistant: read every chat thread and post agent
+ *   replies and commands (`convex/messages.ts`). Held together with `permRead`
+ *   and nothing else, which is what keeps an agent unable to write to the board:
+ *   its commands are executed by the browser of the person it is talking to.
  *
- * `approve` only ever grants `permRead`; the other three are handed out from a
+ * `approve` only ever grants `permRead`; the other four are handed out from a
  * terminal through `seedUser`, so no browser call can widen its own powers.
  */
 
@@ -55,13 +59,15 @@ type Permission =
   | "permRead"
   | "permWrite"
   | "permApproveRegister"
-  | "permEditRequest";
+  | "permEditRequest"
+  | "permAgent";
 
 const PERMISSION_LABEL: Record<Permission, string> = {
   permRead: "讀取",
   permWrite: "編輯",
   permApproveRegister: "審核註冊",
   permEditRequest: "提議編輯",
+  permAgent: "看板助理",
 };
 
 /**
@@ -192,6 +198,7 @@ export const login = query({
       permWrite: v.boolean(),
       permApproveRegister: v.boolean(),
       permEditRequest: v.boolean(),
+      permAgent: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -205,8 +212,11 @@ export const login = query({
       account: user.account,
       permWrite: user.permWrite,
       permApproveRegister: user.permApproveRegister,
-      // Optional on the row (accounts predate it); absent is false.
+      // Optional on the row (accounts predate them); absent is false.
       permEditRequest: user.permEditRequest ?? false,
+      // Nothing in the UI reads this — an agent has no UI. It is here so the
+      // assistant can check its own credential with one HTTP call.
+      permAgent: user.permAgent ?? false,
     };
   },
 });
@@ -236,6 +246,7 @@ export const register = mutation({
       permWrite: false,
       permApproveRegister: false,
       permEditRequest: false,
+      permAgent: false,
     });
     return null;
   },
@@ -316,17 +327,22 @@ export const dismiss = mutation({
  *
  * Internal, so it runs from a terminal against a chosen deployment and never
  * from a browser. This is how the first administrator gets in, and the only way
- * `permWrite` / `permApproveRegister` / `permEditRequest` are ever granted:
+ * `permWrite` / `permApproveRegister` / `permEditRequest` / `permAgent` are ever
+ * granted:
  *
  * ```bash
  * npx convex run auth:seedUser '{"account":"someone",
  *   "tokenHash":"<sha256 of kanban:someone:<password>>",
  *   "permRead":true,"permWrite":true,"permApproveRegister":true,
  *   "permEditRequest":false}'
+ * # the board assistant's own account: read the board, work the chat, write nothing
+ * npx convex run auth:seedUser '{"account":"agent","tokenHash":"<64 hex>",
+ *   "permRead":true,"permWrite":false,"permApproveRegister":false,
+ *   "permAgent":true}'
  * ```
  *
- * `permEditRequest` may be left out, which reads as false — so calls written
- * before edit requests existed still mean what they meant.
+ * `permEditRequest` and `permAgent` may be left out, which reads as false — so
+ * calls written before either existed still mean what they meant.
  *
  * The hash has to be computed outside — the same
  * `sha256("kanban:<account>:<password>")` the browser uses — which keeps this
@@ -340,6 +356,7 @@ export const seedUser = internalMutation({
     permWrite: v.boolean(),
     permApproveRegister: v.boolean(),
     permEditRequest: v.optional(v.boolean()),
+    permAgent: v.optional(v.boolean()),
   },
   returns: v.object({ created: v.boolean() }),
   handler: async (ctx, args) => {
@@ -350,6 +367,7 @@ export const seedUser = internalMutation({
       permWrite: args.permWrite,
       permApproveRegister: args.permApproveRegister,
       permEditRequest: args.permEditRequest ?? false,
+      permAgent: args.permAgent ?? false,
     };
 
     const existing = await byAccount(ctx, account);
@@ -368,13 +386,23 @@ export const seedUser = internalMutation({
  * Their pending edit requests go too. A request is a live proposal, not a record
  * of what happened, so an account that no longer exists should not leave
  * something for a reviewer to approve in its name.
+ *
+ * So does their assistant conversation. A thread is addressed by account *name*,
+ * so leaving it behind would hand it to whoever registers that name next.
  */
 export const deleteUser = internalMutation({
   args: { account: v.string() },
-  returns: v.object({ deleted: v.boolean(), editRequestsDeleted: v.number() }),
+  returns: v.object({
+    deleted: v.boolean(),
+    editRequestsDeleted: v.number(),
+    messagesDeleted: v.number(),
+  }),
   handler: async (ctx, args) => {
-    const user = await byAccount(ctx, cleanAccount(args.account));
-    if (!user) return { deleted: false, editRequestsDeleted: 0 };
+    const account = cleanAccount(args.account);
+    const user = await byAccount(ctx, account);
+    if (!user) {
+      return { deleted: false, editRequestsDeleted: 0, messagesDeleted: 0 };
+    }
 
     const requests = await ctx.db
       .query("editRequests")
@@ -382,8 +410,18 @@ export const deleteUser = internalMutation({
       .collect();
     for (const request of requests) await ctx.db.delete(request._id);
 
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_account", (q) => q.eq("account", account))
+      .collect();
+    for (const message of messages) await ctx.db.delete(message._id);
+
     await ctx.db.delete(user._id);
-    return { deleted: true, editRequestsDeleted: requests.length };
+    return {
+      deleted: true,
+      editRequestsDeleted: requests.length,
+      messagesDeleted: messages.length,
+    };
   },
 });
 
@@ -397,6 +435,7 @@ export const listUsers = internalQuery({
       permWrite: v.boolean(),
       permApproveRegister: v.boolean(),
       permEditRequest: v.boolean(),
+      permAgent: v.boolean(),
     }),
   ),
   handler: async (ctx) => {
@@ -409,6 +448,7 @@ export const listUsers = internalQuery({
         permWrite: user.permWrite,
         permApproveRegister: user.permApproveRegister,
         permEditRequest: user.permEditRequest ?? false,
+        permAgent: user.permAgent ?? false,
       }));
   },
 });

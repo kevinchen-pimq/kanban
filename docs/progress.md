@@ -1,6 +1,6 @@
 # 當前進度
 
-_更新於 2026-08-18。_
+_更新於 2026-08-20。_
 
 ## 已完成
 
@@ -35,7 +35,7 @@ _更新於 2026-08-18。_
 - **帳號密碼登入與權限控管**：`users` 表存 `sha256("kanban:<account>:<password>")`
   （hash 在瀏覽器用 Web Crypto 算，明文密碼不離開瀏覽器），前端把
   `{ account, tokenHash }` 當 `auth` 參數送進每一次呼叫，`convex/auth.ts` 是唯一
-  的關口：讀要 `permRead`、寫要 `permWrite`。註冊是公開的，但新帳號三個權限都是
+  的關口：讀要 `permRead`、寫要 `permWrite`。註冊是公開的，但新帳號五個權限都是
   false，要有 `permApproveRegister` 的人從 header 的鈴鐺（有人在等就亮紅點）按
   通過才拿到讀取權；`permWrite` 只能用 internal 的 `auth:seedUser` 給。
   沒有編輯權也沒有提議權的人看到唯讀看板（沒有「+」、不能拖、燈號不可點）。
@@ -49,8 +49,36 @@ _更新於 2026-08-18。_
   每一列直接攤開 diff，按「核准」走的是跟直接寫入完全同一條路徑（`convex/apply.ts`），
   核准會重新驗證、失敗時把原因給審核者並保留該筆讓他改按「忽略」。權限只能用
   internal 的 `auth:seedUser` 給，註冊審核通過仍然只給 `permRead`。
+- **看板助理聊天（FAB ＋ `messages` 表 ＋ agent skill）**：右下角的泡泡打開一個
+  對話視窗，訊息存在 Convex，一個帳號一條對話（別人的看不到）。對話的另一端是
+  一個 agent（另一個 session 的 Claude Code），它拿 `permRead + permAgent` 的帳號，
+  透過 HTTP 打 `messages:agent*` 與 `board:get`——**它碰不到看板資料**。要改看板時
+  它下一條指令（五種形狀之一，卡片一律用 key 指涉），由**使用者的瀏覽器**用
+  **使用者自己的憑證**跑那五個 `board:*` mutation，所以 `permWrite` 的人指令直接
+  生效、只有 `permEditRequest` 的人得到一筆待審提議（badge 與審核流程完全沿用），
+  唯讀的人被拒絕，全部不需要額外程式碼。指令由 `messages:claim` 原子性認領，開兩個
+  分頁只會執行一次；執行器掛在一直存在的 FAB 上，所以把視窗關掉也不會卡住指令，
+  有新回覆時 FAB 亮紅點。失敗（key 不存在、週次不存在、驗證不過）會把原因寫回訊息
+  給 agent 讀。agent 端的做法與紅線在 `.claude/skills/board-assistant/SKILL.md`。
+- **助理的即時監聽與已讀**：agent 端不再輪詢——`messages:agentWatch` 是「還沒讀到的
+  事件」（新訊息／指令結果兩種），`scripts/listen.mjs` 用 WebSocket 訂閱它、阻塞到有
+  事件、標已讀後印出 JSON 就結束程序，所以 main agent 只要把它丟到背景 task 就會被
+  喚醒（實測 ~50ms），一條對話派一個 sub-agent（skill 的「The duty loop」）。訊息多了
+  `readAt`（**已讀 ≠ 處理完**：`handled` 還是收件匣旗標），聊天視窗在使用者自己的泡泡
+  底下反應式地長出「已讀」小字。`agentMarkRead` 回傳真正標到的 id，所以多個 listener
+  同時等也只有一個會接手同一則訊息。
+- **助理的值班機制（standby、exclude、escalation）**：main agent 開工先確認
+  `node_modules`／環境變數／`auth:login`，然後預熱**兩個 standby sub-agent**，有對話
+  進來用 `SendMessage` 交給待命者並立刻補一個新的（省掉讀 skill 的冷啟動）。交出去的
+  帳號同時進主 listener 的 `--exclude` 與 `listen.mjs --escalate <帳號…> --grace 5`
+  ——escalation 模式訂閱同一個 `agentWatch` 但**不標已讀、不認領**，新訊息過了 grace
+  還沒有 `readAt` 就印一個 `type: "escalation"` 事件叫醒 main agent（sub-agent 死掉的
+  對話不會被放生）。sub-agent 則自己用 `--account` 監看它那條對話的後續訊息，結束時
+  `agentMarkHandled` 並回報。判定只讀 `readAt`，所以後端沒有任何改動。skill 也明文
+  寫了助理**可讀** Jira／GitHub PR、**不可寫**（不 transition、不留言、不 merge）。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
-- 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`）
+- 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
+  當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`）
 - Convex 靜態託管部署（production / dev 兩個 deployment）
 
 ## 尚未實作
@@ -60,3 +88,5 @@ _更新於 2026-08-18。_
 - 回寫 Jira（看板上的修改只留在 Convex，完整重新匯入會被 payload 蓋掉）
 - 換卡片的 Epic（刻意不做，見 data-model.md）
 - Jira 同步自動化（目前由 Agent 依 skill 手動執行）
+- 使用者那邊的推播（助理已經是即時的，但使用者沒有瀏覽器通知；看板沒開著的時候
+  指令就停在 `pending`）
