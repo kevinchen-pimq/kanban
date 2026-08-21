@@ -113,6 +113,8 @@ docs/                本目錄：資料模型、專案結構、進度
 
 **「已讀」是後端的 `readAt`，不是前端猜的。** 使用者自己的泡泡底下那一行小字只在 `message.readAt` 存在時出現；寫它的是助理的 listener（收到事件的同一瞬間呼叫 `messages:agentMarkRead`），而 `messages:thread` 是 subscription，所以訊息送出時沒有標示、助理讀到的那一刻反應式地長出來。這是使用者唯一看得出「助理真的在值班」的訊號，所以刻意做得低調（`text-[10px]` 的灰字，靠右）但即時。語意（read ≠ handled）在 data-model.md。
 
+**訊息內容是 markdown。** 泡泡（使用者、助理、指令那句人話）都經 `ChatMarkdown`（react-markdown ＋ remark-gfm）渲染，表格、清單、連結、行內 code 都能用，樣式縮在聊天的 `text-xs` 尺度、依泡泡底色分兩套。渲染器用 `lazy()` 拆成獨立 chunk，只有對話真的畫在螢幕上才下載，Suspense fallback 是原始文字——看板首屏不為它付一位元組。
+
 **FAB 與視窗都在 `z-40`**，刻意低於暫存區與 dialog（`z-50`）：拖曳到一半時聊天泡泡不該蓋住暫存區。`BoardAssistant` 也掛在 `DndContext` 外面——它跟拖曳無關，而且卡片還在空中時執行器得繼續跑。
 
 助理端是**公開函式**（要 `permAgent`），因為它跑在沒有 Convex 憑證的容器裡：跟瀏覽器一樣送 `{ account, tokenHash }`，一次性呼叫走 `POST /api/query`、`/api/mutation`。指令範例與紅線在 `.claude/skills/board-assistant/SKILL.md`；**憑證只從環境變數來，不進版控**。

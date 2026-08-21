@@ -1,6 +1,8 @@
 import { useMutation, useQuery } from "convex/react";
 import { Loader2, MessageCircle, Send, X } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -235,6 +237,19 @@ const STATUS_STYLE: Record<
   failed: { label: "失敗", className: "bg-rose-100 text-rose-700" },
 };
 
+// Chat is markdown-rendered, but the renderer only loads once a conversation is
+// actually on screen; until then (and while the chunk downloads) the raw text
+// stands in, so nothing blocks on it.
+const ChatMarkdown = lazy(() => import("@/components/ChatMarkdown"));
+
+function Markdown({ text, tone }: { text: string; tone: "user" | "agent" }) {
+  return (
+    <Suspense fallback={<>{text}</>}>
+      <ChatMarkdown text={text} tone={tone} />
+    </Suspense>
+  );
+}
+
 function Message({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     // `readAt` is stamped by the assistant's listener the moment the message
@@ -243,9 +258,9 @@ function Message({ message }: { message: ChatMessage }) {
     // duty. Deliberately quiet: it is reassurance, not information.
     return (
       <div className="ml-8 grid justify-items-end gap-0.5">
-        <p className="rounded-2xl rounded-br-sm bg-indigo-600 px-3 py-1.5 text-xs leading-relaxed break-words text-white">
-          {message.text}
-        </p>
+        <div className="rounded-2xl rounded-br-sm bg-indigo-600 px-3 py-1.5 text-xs leading-relaxed break-words text-white">
+          <Markdown text={message.text} tone="user" />
+        </div>
         {message.readAt !== undefined && (
           <span className="pr-1 text-[10px] text-slate-400">已讀</span>
         )}
@@ -255,9 +270,9 @@ function Message({ message }: { message: ChatMessage }) {
 
   if (!message.command) {
     return (
-      <p className="mr-8 rounded-2xl rounded-bl-sm bg-slate-100 px-3 py-1.5 text-xs leading-relaxed break-words text-slate-700">
-        {message.text}
-      </p>
+      <div className="mr-8 rounded-2xl rounded-bl-sm bg-slate-100 px-3 py-1.5 text-xs leading-relaxed break-words text-slate-700">
+        <Markdown text={message.text} tone="agent" />
+      </div>
     );
   }
 
@@ -276,9 +291,9 @@ function Message({ message }: { message: ChatMessage }) {
       </div>
 
       {/* The agent's own sentence: the part a person is expected to read. */}
-      <p className="text-xs leading-relaxed break-words text-slate-700">
-        {message.text}
-      </p>
+      <div className="text-xs leading-relaxed break-words text-slate-700">
+        <Markdown text={message.text} tone="agent" />
+      </div>
 
       {/* And the payload it actually sent, so the two can be compared. */}
       <p className="font-mono text-[10px] leading-snug break-all text-slate-400">
