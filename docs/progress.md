@@ -67,6 +67,15 @@ _更新於 2026-08-20。_
   `readAt`（**已讀 ≠ 處理完**：`handled` 還是收件匣旗標），聊天視窗在使用者自己的泡泡
   底下反應式地長出「已讀」小字。`agentMarkRead` 回傳真正標到的 id，所以多個 listener
   同時等也只有一個會接手同一則訊息。
+- **助理的值班機制（standby、exclude、escalation）**：main agent 開工先確認
+  `node_modules`／環境變數／`auth:login`，然後預熱**兩個 standby sub-agent**，有對話
+  進來用 `SendMessage` 交給待命者並立刻補一個新的（省掉讀 skill 的冷啟動）。交出去的
+  帳號同時進主 listener 的 `--exclude` 與 `listen.mjs --escalate <帳號…> --grace 5`
+  ——escalation 模式訂閱同一個 `agentWatch` 但**不標已讀、不認領**，新訊息過了 grace
+  還沒有 `readAt` 就印一個 `type: "escalation"` 事件叫醒 main agent（sub-agent 死掉的
+  對話不會被放生）。sub-agent 則自己用 `--account` 監看它那條對話的後續訊息，結束時
+  `agentMarkHandled` 並回報。判定只讀 `readAt`，所以後端沒有任何改動。skill 也明文
+  寫了助理**可讀** Jira／GitHub PR、**不可寫**（不 transition、不留言、不 merge）。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
   當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`）

@@ -247,6 +247,8 @@ npx convex run auth:seedUser ... --prod   # 對 production
 
 沒有 webhook，但也**不需要輪詢**：listener 用 Convex 的 WebSocket 訂閱這個 query，有人送訊息或瀏覽器回報結果時 Convex 直接推過來（本地實測 wake latency ~50ms），listener 標已讀、把事件印成 JSON、然後結束程序——「程序結束」就是通知。`account` 參數把 feed 縮到一條對話，讓正在對談的 sub-agent 只等自己這位使用者。已經 `handled` 的列不算事件，所以這個欄位加上來之前的舊訊息不會突然把人叫起來。
 
+同一個 query 也支撐 listener 的 **escalation 模式**（`--escalate`，看著已經派給 sub-agent 的那些對話）：它訂閱一樣的 feed 但**不呼叫 `agentMarkRead`**，看到新訊息就等幾秒再用 `agentRead` 讀 `readAt` 判斷「有沒有人接走」。所以「監看別人的對話」不需要任何新函式或新欄位——`readAt` 本來就是那個訊號，而不標已讀正是它必須維持的禮貌（被它報出來的事件還沒被認領，接手的人才拿得到）。設計在 architecture.md 的「看板助理」與 skill 的「Escalation」。
+
 ### 指令：五種形狀，一律用 key 指涉
 
 `convex/schema.ts` 的 `commandValidator` 就是白名單，一一對應五個 `board:*` mutation。**卡片一律用 `key`、格子用 epic `code` + checkpoint**，不用 Convex id——id 換一個 deployment 就不一樣，key 不會。`checkpoint` 是週次數字或字串 `"backlog"`。

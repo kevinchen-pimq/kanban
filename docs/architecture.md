@@ -119,7 +119,17 @@ docs/                本目錄：資料模型、專案結構、進度
 
 助理端是**公開函式**（要 `permAgent`），因為它跑在沒有 Convex 憑證的容器裡：跟瀏覽器一樣送 `{ account, tokenHash }`，一次性呼叫走 `POST /api/query`、`/api/mutation`。指令範例與紅線在 `.claude/skills/board-assistant/SKILL.md`；**憑證只從環境變數來，不進版控**。
 
-**助理不輪詢，它被推。** 等訊息的那一半是 `scripts/listen.mjs`：用 `convex` 套件的 `ConvexClient`（Node 22 有內建的 `WebSocket`，不需要額外依賴）訂閱 `messages:agentWatch`，阻塞到有事件為止，然後標已讀、把事件印成 JSON、**結束程序**。「程序結束」就是通知——main agent 把它丟到背景 task，訊息一到就被喚醒（本地實測 ~50ms），不用 `sleep` 迴圈。事件有兩種（`userMessage`、`commandResult`），所以「等使用者下一句」與「等指令跑完」是同一個機制；`--account` 把 feed 縮到一條對話，`--exclude` 把已經派給 sub-agent 的對話讓出去。多個 listener 同時等也不會撞：`agentMarkRead` 回傳它**真正標到**的 id，沒標到的那個就繼續等（認領語意是 mutation 交易免費給的）。分工是 main agent 只負責等與派工、一條對話一個 sub-agent，寫在 skill 的「The duty loop」。
+**助理不輪詢，它被推。** 等訊息的那一半是 `scripts/listen.mjs`：用 `convex` 套件的 `ConvexClient`（Node 22 有內建的 `WebSocket`，不需要額外依賴）訂閱 `messages:agentWatch`，阻塞到有事件為止，然後標已讀、把事件印成 JSON、**結束程序**。「程序結束」就是通知——main agent 把它丟到背景 task，訊息一到就被喚醒（本地實測 ~50ms），不用 `sleep` 迴圈。事件有兩種（`userMessage`、`commandResult`），所以「等使用者下一句」與「等指令跑完」是同一個機制；`--account` 把 feed 縮到一條對話，`--exclude` 把已經派給 sub-agent 的對話讓出去。多個 listener 同時等也不會撞：`agentMarkRead` 回傳它**真正標到**的 id，沒標到的那個就繼續等（認領語意是 mutation 交易免費給的）。
+
+**值班的形狀：待命的人、讓出去的對話、看著讓出去的那雙眼睛。** main agent 只做三件事，細節在 skill 的「The duty loop」：
+
+- **開工前置**：`node_modules` 在不在（listener 要 import `convex`）、三個環境變數有沒有、`auth:login` 打不打得通。listener 跑不起來的助理跟不在值班的助理，從使用者那邊看起來一模一樣。
+- **預熱兩個 standby sub-agent**：sub-agent 的第一分鐘花在讀 skill 與確認環境，剛問完問題的人不該付這個錢。所以先派兩個待命者，有對話進來就用 `SendMessage` 交給待命者（Claude Code 的 sub-agent 回報完仍然在、context 還在），同一輪立刻補一個新的 standby。
+- **交出去 = 排除 + 監看**：一條對話派給 sub-agent 之後，主 listener 重啟時把該帳號放進 `--exclude`（否則兩個 listener 搶同一句話，而輸的那個可能正是握著對話的 sub-agent），同時把同一份名單餵給 `--escalate`。sub-agent 回報結束才從兩邊移除。**排除而不監看就是放生**，這是下一段存在的理由。
+
+**Escalation：被排除的對話還是有人看著。** `listen.mjs --escalate <帳號…> --grace 5` 是同一個腳本的第二個模式：訂閱一樣的 `messages:agentWatch`，但**不標已讀、不認領**——它看的每一列都是別人的。看到那些帳號的新 `userMessage` 就起一個 grace（預設 5 秒）計時器，到期用 `messages:agentRead` 重讀那條對話：有 `readAt`（或已 `handled`）就表示 sub-agent 還活著，繼續等下一則；還是沒讀就印出一個 `type: "escalation"` 事件並結束程序，main agent 被喚醒後重派（事件沒被認領，所以接手的人看得到全部內容）。因為判定只讀 `readAt`，**後端一行都不用改**；grace 刻意設得很短——誤報只花一次查詢，漏報是一個人對著沒反應的聊天窗坐著。
+
+分工的另一半在 sub-agent 身上：接手一條對話之後**它自己**用 `listen.mjs --account <帳號>` 監看後續訊息（main agent 已經把這個帳號排除了，沒有人會替它接），對話告一段落才 `agentMarkHandled` 並回報。
 
 ## 時間區間與 lazy loading
 

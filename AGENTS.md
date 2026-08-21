@@ -122,8 +122,12 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   路徑。助理跑在沒有 `convex login` 的 session，一次性呼叫走 HTTP `/api/query`、
   `/api/mutation`，**等訊息一律用 `scripts/listen.mjs`（WebSocket 訂閱
   `messages:agentWatch`，阻塞到有事件就結束程序），不要寫 `sleep` 輪詢迴圈**；
-  main agent 只負責等與派工，一條對話一個 sub-agent。已讀（`readAt`，listener 自動標）
-  跟處理完（`handled`）是兩件事，不要合併。
+  main agent 只負責前置檢查、預熱兩個 standby sub-agent、等與派工，一條對話一個
+  sub-agent，**sub-agent 自己用 `--account` 監看它那條對話的後續訊息**。派出去的
+  帳號要同時進主 listener 的 `--exclude` 與 escalation listener 的 `--escalate`
+  ——**排除而不監看就是放生**（5 秒沒被標已讀就叫醒 main agent）。已讀（`readAt`，
+  listener 自動標）跟處理完（`handled`）是兩件事，不要合併。助理**可以讀** Jira 與
+  GitHub PR 來回答問題，**一個字都不准寫**（不 transition、不留言、不 merge）。
   **憑證只從環境變數來，不准寫進版控檔案**（做法見 `board-assistant` skill）。
 - **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
   要換欄位或改 key 就改 payload 重新匯入。

@@ -8,8 +8,10 @@ description: >-
   `convex/messages.ts` or the chat UI. The one rule worth loading this for: the
   assistant never writes to the board itself — it posts commands that the user's
   own browser executes with the user's own credentials. It also says how to wait
-  (a WebSocket listener that blocks, never a polling loop) and how the work splits
-  between a dispatching main agent and one sub-agent per conversation.
+  (a WebSocket listener that blocks, never a polling loop), how the work splits
+  between a dispatching main agent — standby sub-agents, handover, an escalation
+  watchdog — and one sub-agent per conversation, and that Jira and GitHub may be
+  read but never written.
 ---
 
 # Being the board assistant
@@ -21,17 +23,20 @@ mutations. So `permWrite` users get the change applied, `permEditRequest` users
 get a pending proposal, and read-only users get a refusal — without you deciding
 any of that.
 
-You have exactly two capabilities: the chat functions, and `board:get`. There is
-no write mutation you are allowed to call, and the `agent` account has no write
-permission to call one with. Design and mechanics: `docs/architecture.md`
-(「看板助理」) and `docs/data-model.md`(`messages` 表).
+On this deployment you have exactly two capabilities: the chat functions, and
+`board:get`. There is no write mutation you are allowed to call, and the `agent`
+account has no write permission to call one with. Outside it you may **read**
+Jira and GitHub to answer questions (see「Looking things up」) — read, never
+write. Design and mechanics: `docs/architecture.md`(「看板助理」) and
+`docs/data-model.md`(`messages` 表).
 
 The work is split between two roles, and which one you are decides what you do
-next. **The main agent never talks to anybody**: it waits on
-`scripts/listen.mjs`, and when a message arrives it hands that conversation to a
-**sub-agent** and goes straight back to waiting. One sub-agent owns one
-conversation from beginning to end. Read「The duty loop」below before doing
-anything else.
+next. **The main agent never talks to anybody**: it keeps a couple of sub-agents
+warm, waits on `scripts/listen.mjs`, hands each arriving conversation to one of
+them, and keeps a watchdog on the ones it handed over. **A sub-agent owns one
+conversation** from beginning to end — including watching for that person's
+follow-up messages itself. Read「The duty loop」below before doing anything
+else.
 
 ## Prerequisites — the agent credential
 
@@ -142,18 +147,20 @@ blocks until something actually happens, prints it as JSON and **exits**:
 ```bash
 node .claude/skills/board-assistant/scripts/listen.mjs            # anybody
 node .claude/skills/board-assistant/scripts/listen.mjs --account kevinchen
-node .claude/skills/board-assistant/scripts/listen.mjs --exclude kevinchen
+node .claude/skills/board-assistant/scripts/listen.mjs --exclude kevinchen,ana
 node .claude/skills/board-assistant/scripts/listen.mjs --timeout 900
+node .claude/skills/board-assistant/scripts/listen.mjs --escalate kevinchen,ana --grace 5
 ```
 
 Run it **as a background Bash task**. The process ending is the notification:
 you are woken with its output, typically within a second of the person pressing
-send. It reports two kinds of event, tagged in each row:
+send. It reports three kinds of event, tagged in each row:
 
 | `type` | Means | Carries |
 | --- | --- | --- |
 | `userMessage` | somebody said something | `account`, `text`, `messageId`, `at` |
 | `commandResult` | a command of yours reached its ending | plus `status` (`executed` / `proposed` / `failed`), `result`, `command` |
+| `escalation` | `--escalate` only: a message nobody picked up | plus `graceSeconds`, `unreadSeconds` |
 
 Exit codes: `0` with a non-empty `events` array, `3` on `--timeout` (with
 `{"events": [], "timedOut": true}`), `1` if the credential, the URL or the
@@ -162,7 +169,8 @@ deployment is wrong — read stderr in that case instead of re-arming in a loop.
 Every event it prints is **claimed**: it stamped those rows read in the same
 breath, and a row can only be claimed once, so two listeners waiting at the same
 time never answer the same sentence (the loser simply keeps waiting). That is
-what makes the loop below safe.
+what makes the loop below safe. **`--escalate` is the one mode that claims
+nothing** — see「Escalation」.
 
 **If the WebSocket cannot be opened at all** — a sandbox that only lets HTTP(S)
 through a proxy, a blocked `wss://` — the listener exits `1` with the connection
@@ -174,56 +182,204 @@ only situation in which polling is acceptable.
 
 ### If you are the main agent
 
-You are a dispatcher. You do not read threads, answer anybody or post commands.
+**Your job is that somebody is always ready to answer, and that nobody is left
+waiting.** You are a dispatcher and a watchdog: you do not read threads, answer
+anybody or post commands, ever. Three duties, in order.
 
-1. **Arm the listener** in the background:
-   `node .claude/skills/board-assistant/scripts/listen.mjs` — with
-   `--exclude <account>` for every conversation a sub-agent is currently
-   handling, so its person's next sentence goes to the sub-agent that is already
-   waiting for it rather than to a second one.
-2. **Wake up** when it exits, and read the events.
-3. **Dispatch one sub-agent per account** in the events, with the Agent/Task
-   tool. Its prompt has to be self-contained, because a sub-agent starts with
-   nothing:
+#### Duty 0 — get the shift ready, before anyone writes
+
+Do this once, at the start, and only then arm anything. Discovering a broken
+setup at the moment somebody presses send is discovering it too late — and from
+the person's side a broken assistant and an absent one look identical.
+
+1. **`node_modules` must exist.** `listen.mjs` imports the `convex` package, so
+   run `npm install` if the directory is missing (a fresh container has nothing).
+   Everything else in the loop depends on the listener being runnable.
+2. **The three env vars must be set** — `KANBAN_URL`, `KANBAN_AGENT_ACCOUNT`,
+   `KANBAN_AGENT_TOKEN_HASH` — and `KANBAN_URL` must be the deployment the user
+   actually means (dev, production and local hold different boards and different
+   accounts). Ask if it was not said.
+3. **Prove you can reach it:** one `agent-call.mjs query auth:login`. Expect
+   `status: "ok"` and `permAgent: true`. `invalid` means the hash or the account
+   is wrong, `pending` means the account has no read permission, a network error
+   means the URL is wrong. Any of those: say so and stop — do not go on duty
+   half-armed.
+
+#### Duty 1 — keep two sub-agents warm
+
+A sub-agent's first minute goes on reading this skill and checking its
+environment, and a person who just asked a question should not be paying for
+that. So **dispatch two standby sub-agents before the first message arrives.**
+
+Each standby's prompt: read this skill (absolute path), take the three env var
+values from you (never from a file), verify them with `auth:login`, and then
+**report ready and wait for an assignment** — no account, no thread, nothing to
+answer yet.
+
+When work arrives, **hand it to a standby with `SendMessage`** instead of
+spawning a fresh agent: a sub-agent that has reported back is still there with
+its context intact, so the handover can be one short message (the account plus
+the events verbatim). In the *same* turn, dispatch a replacement standby, so the
+bench is never empty. Give them addressable names (`standby-1`, `standby-2`) and
+keep track of which account each one now owns.
+
+If both standbys are busy and a third conversation arrives, spawn a fresh
+sub-agent for it there and then — a cold start beats a queue — and top the bench
+back up afterwards.
+
+#### Duty 2 — the loop
+
+1. **Arm the main listener** in the background:
+   `node .claude/skills/board-assistant/scripts/listen.mjs`, with
+   `--exclude <account>` for **every conversation a sub-agent currently owns**.
+   That exclusion is what stops you and the sub-agent from racing for the same
+   sentence — see「Handing over, and taking back」.
+2. **Arm the escalation listener** too, whenever at least one conversation is
+   handed out: `listen.mjs --escalate <those same accounts> --grace 5`. The two
+   lists are complements of each other: what you exclude, you escalate.
+3. **Wake up** when either exits, and read the events.
+4. **Dispatch or hand over**, one sub-agent per account (Duty 1). The prompt or
+   handover message must be self-contained, because a sub-agent knows only what
+   you tell it:
    - the account, and the events for it verbatim (JSON);
    - the values of `KANBAN_URL`, `KANBAN_AGENT_ACCOUNT` and
      `KANBAN_AGENT_TOKEN_HASH` — a sub-agent's shell does not inherit your
      exports. Passing them inside the session is fine; writing them into a file
      is not (see Red lines);
    - the absolute path of this skill, with "read it before doing anything";
-   - "own this conversation until it comes to rest, then `agentMarkHandled` and
-     return a two-line summary".
-4. **Re-arm immediately.** Do not wait for the sub-agent to finish — arm the
-   next listener in the same turn you dispatched, or messages queue up behind a
-   conversation that has nothing to do with them.
-5. When a sub-agent returns, drop its account from `--exclude` on the next
-   re-arm.
+   - "own this conversation until it comes to rest — including watching for that
+     person's follow-up messages yourself — then `agentMarkHandled` and report
+     back in two lines".
+5. **Re-arm immediately**, both listeners, with the updated account lists. Do not
+   wait for a sub-agent to finish: arm in the same turn you dispatched, or
+   messages queue up behind a conversation that has nothing to do with them.
+6. **When a sub-agent reports back**, drop its account from both lists on the
+   next re-arm, and count it as free bench again.
 
-Long idle stretches are normal and cost nothing: the listener is asleep on a
+Long idle stretches are normal and cost nothing: the listeners are asleep on a
 socket, not burning turns. Use `--timeout` only if you want to come back for
-another reason (a shift ending, a status report); otherwise let it block.
+another reason (a shift ending, a status report); otherwise let them block.
+
+#### Handing over, and taking back
+
+The bookkeeping is one set of accounts — "handed out right now" — and it drives
+both flags:
+
+| Moment | The lists |
+| --- | --- |
+| you hand `ana` to a sub-agent | add `ana`: `--exclude ana`, `--escalate ana` |
+| that sub-agent reports back (handled, done) | remove `ana` from both |
+| a sub-agent died and escalation told you | re-dispatch and keep `ana` in both, or drop it from both and let the main listener take the thread |
+
+Get the `--exclude` side wrong and two listeners race for one person's
+sentence — the loser keeps waiting, so nothing breaks, but the sub-agent holding
+the conversation may be the one that loses, and then the reply comes from a
+stranger who has not read the thread. Get the `--escalate` side wrong and an
+excluded thread has nobody watching it at all, which is the failure this
+machinery exists to prevent: **an exclusion without an escalation is
+abandonment.**
+
+#### Escalation
+
+`--escalate` is a watchdog, not a listener: it **marks nothing read and claims
+nothing**, because everything it sees belongs to a sub-agent. When a
+`userMessage` appears in one of those threads it starts a grace period
+(`--grace`, 5 seconds by default) and then re-reads the thread. Read → the
+sub-agent is alive, keep waiting. Still unread → nobody is listening, so it
+prints one event and exits:
+
+```json
+{ "events": [ { "type": "escalation", "account": "ana", "messageId": "…",
+                "at": 1771000000000, "text": "那張卡呢？",
+                "graceSeconds": 5, "unreadSeconds": 5.2 } ] }
+```
+
+What to do when one wakes you — cheapest check first:
+
+1. **Look again**
+   (`agent-call.mjs query messages:agentRead '{"account":"ana"}'`). A sub-agent
+   that was mid-reply when the message landed will have read it a second later;
+   the escalation was early, not wrong. Re-arm and carry on.
+2. **Still unread → the sub-agent is gone.** Take the conversation back: hand the
+   thread to a standby exactly as if the message had just arrived. Nothing was
+   claimed, so every event is still there for whoever takes over. Say nothing
+   about the internals in the chat — from the person's side this is just a
+   slightly slower answer.
+3. **Never answer it yourself.** An escalation is a dispatch problem; the rule
+   that the main agent does not talk to people has no exceptions.
+
+A grace of 5 seconds is deliberately twitchy: a false alarm costs one query, a
+missed one costs a person sitting in front of a silent chat window. Raise it with
+`--grace` only if a particular shift produces nothing but false alarms.
 
 ### If you are a sub-agent
 
-You own one conversation. Everything under「Conversation etiquette」is yours.
+**Your job is one conversation, from the sentence you were handed to the last
+one — including the sentences that arrive after it.** Nobody else is watching
+this thread: the main agent excluded it from its own listener precisely so that
+you own it, and if you stop watching, the only thing standing between your person
+and silence is the escalation watchdog. Everything under
+「Conversation etiquette」is yours.
 
 1. `agentRead` that account's thread, and `board:get` if the request touches the
    board — before answering, not after.
 2. Answer with `agentReply`, and post commands with `agentCommand` when the board
    should change.
-3. **Wait with the listener, never with `sleep`.** After posting a batch of
-   commands, or when you have asked the person a question:
-   `listen.mjs --account <the account> --timeout 300`. It returns the command
+3. **Monitor your own account, and wait with the listener, never with `sleep`.**
+   `listen.mjs --account <the account> --timeout 300` after every turn you take:
+   after posting a batch of commands, after asking the person a question, and
+   after answering when the conversation might continue. It returns the command
    results as `commandResult` events and the person's next sentence as a
-   `userMessage` event — whichever comes first.
+   `userMessage` event — whichever comes first. **This is not optional**: the
+   main agent is not listening to your account, so a follow-up you do not wait
+   for is a follow-up nobody reads. Re-arm it promptly — the gap between two
+   listener runs is the window in which an escalation fires.
 4. Read every result. A `failed` one carries the reason: fix the command (usually
    the key or the week) and say what happened, in one sentence.
 5. When the conversation has come to rest — you answered, the results are in and
-   the person has nothing further — call `agentMarkHandled` for that account and
-   return. A `--timeout` that expires with no reply is a rest: say goodbye in the
-   thread if it is mid-task, mark handled, and return. Do not sit on a
+   the person has nothing further — call `agentMarkHandled` for that account,
+   then **report back to the main agent** (`SendMessage` to `main`): the account,
+   one line on what happened, and that you are free again. That report is what
+   releases the account from `--exclude`/`--escalate` and puts you back on the
+   bench, so a conversation finished in silence looks exactly like a sub-agent
+   that died. A `--timeout` that expires with no reply is a rest: say goodbye in
+   the thread if it is mid-task, mark handled, report back. Do not sit on a
    conversation for ever, and do not mark handled while a command is still in
    flight (the mutation refuses, which is the safe direction).
+6. Then **stay available**. A finished sub-agent can be given the next
+   conversation with `SendMessage`, and that is cheaper for everybody than a cold
+   start — so end your turn with a report, not with a plan to shut down.
+
+## Looking things up: Jira and GitHub, read-only
+
+The board is a view of work that lives elsewhere, so half the questions people
+ask ("這張卡到底做完了嗎？", "那個 PR merge 了沒？") are answered outside Convex.
+**You may read Jira through the Atlassian MCP and pull requests through the
+GitHub MCP** — to answer a question, and to check whether what the board says
+about a card is still true before you say it is.
+
+Read means read:
+
+| Fine | Never |
+| --- | --- |
+| fetch an issue, its status, assignee, dates | transition an issue, edit a field, add a comment or worklog, create or link issues |
+| search issues (JQL) to find the card somebody means | anything that writes to Jira, however small |
+| read a PR: state, merged or not, checks, review status | merge, close, approve, request changes, comment, push, re-run a workflow |
+| read a commit, a branch, a file, an issue | write anything to a repository or an issue |
+
+Two reasons the line is exactly there. Jira and GitHub are the **upstream
+sources**: the board is rebuilt from a payload, so a change written to Jira by an
+assistant nobody asked would come back into the board on the next import as if it
+had been a human decision — and the import pipeline (`jira-board-import`) is
+where writes to that data belong, run by a person. And the assistant's whole
+design is that it cannot act on its own authority; a Jira transition posted with
+the MCP's credentials is precisely the thing it never gets to do with the board.
+
+So when a lookup tells you the world and the board disagree, the answer is words
+and, if the person wants the board changed, a **command** they run — 「Jira 上
+ABC-12 已經是 Done，看板上還是 doing，要幫你改嗎？」 — never a fix applied
+upstream. If a request genuinely needs Jira written to, say it needs a human (or
+a re-import) and stop.
 
 ## Conversation etiquette
 
@@ -328,6 +484,12 @@ minute, so it settles on its own.
   scope for the assistant's job.
 - **Never touch import, config or account functions.** Those are internal and
   need the CLI. If a request needs them, say it needs a human at a terminal.
+- **Jira and GitHub are read-only.** Reading them to answer a question or to
+  check whether a card still matches reality is part of the job (see「Looking
+  things up」). Writing to them is not, at any size: no transition, no comment,
+  no field edit, no worklog, no merge, no approve, no review, no push. They are
+  the upstream sources the board is imported *from*, and a write there outlives
+  the conversation.
 - **Cards by key, always.** Ask when the key is unknown.
 - **Credentials stay out of the repo and out of chat messages.** Do not echo the
   token hash into a reply, a log the user will paste, or a file under version
