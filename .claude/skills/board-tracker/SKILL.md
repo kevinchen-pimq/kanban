@@ -58,6 +58,7 @@ Deployments:
 | local anonymous | `http://127.0.0.1:3210` |
 
 Before doing anything, verify once with `auth:login`: expect `status: "ok"`
+(which already means `permRead` — the answer does not carry a `permRead` field)
 with `permEditRequest: true`, `permTracker: true`, and `permWrite: false`. Any
 other combination means the account was seeded wrong — stop and say so rather
 than patrolling half-armed. Also make sure `node_modules` exists (`npm
@@ -121,10 +122,14 @@ closed PRs):
    not the review verdicts.
 
 The PR facts come from the GitHub MCP (`pull_request_read` and friends):
-state, `created_at`, merged or not, and the review-request events. Week
-numbers come from `npm run week` — the team's Sunday–Saturday numbering is not
-the ISO week, and the repo is checked out in every fired session, so the tool
-is always there.
+state, `created_at`, merged or not, and the review-request events. **A PR
+whose repository this session cannot read** (the GitHub allowlist may cover
+only the kanban repo itself) is degraded, not failed: list the card as 需檢查
+／無法讀取 instead of guessing either way, and say which repositories were
+unreadable in the session output — same spirit as the missing-Atlassian rule.
+Week numbers come from `npm run week` — the team's Sunday–Saturday numbering
+is not the ISO week, and the repo is checked out in every fired session, so
+the tool is always there.
 
 ## Duty: patrol (09:00 and 13:30, Mon–Fri)
 
@@ -167,27 +172,41 @@ storage and broadcast to everybody.
 
 Sections, in order — one section per feature, keep each one short:
 
-1. **本週總覽** — done / doing / stuck / newly added counts for last week, and
-   the done-count delta against the week before.
+1. **本週總覽** — the status-light counts of last week's row (done / doing /
+   testing / todo, plus how many are stuck), and the done-count delta against
+   the week before — both as row snapshots at report time. The board keeps no
+   history, so "newly added this week" cannot be known — do not claim it.
 2. **每人消化量** — one row per assignee: finished last week, still holding,
-   stuck. The board keeps no history, so "finished last week" is the honest
-   snapshot: cards in last week's row whose light is `done` at report time.
+   stuck — with backlog cards as their own separate column, never mixed into a
+   week's numbers. "Finished last week" is the honest snapshot: cards in last
+   week's row whose light is `done` at report time.
 3. **卡住清單** — every currently-stuck card: key, assignee, PR link, working
    days since the PR was created, review rounds; sorted most-stuck first.
 4. **PR review 統計** — PRs merged last week: working days from creation to
    merge and review rounds for each, the averages, and the slowest few named.
+   If the PRs' repositories are unreadable (see the degradation rule above),
+   say so in place of the numbers rather than dropping the section silently.
 5. **看板與 Jira 的落差** — mismatches found this morning, each marked 已提議待審
-   when a proposal exists.
+   when a pending proposal covers it. Proposals from earlier patrols are
+   visible to you: they were made by this same tracker account, and
+   `board:get` overlays your own pending requests.
 6. **下週預排狀況** — what is already scheduled into the new week's row, and
-   who has nothing yet.
+   who has nothing yet. If the new week's row does not exist yet (creating it
+   is a person's affordance on the board, not yours), say 尚未建立 and list
+   the backlog as the pool the week would draw from.
 
 Publish with the script — it uploads the file, records it and broadcasts the
 notification in one go:
 
 ```bash
 node .claude/skills/board-tracker/scripts/upload-report.mjs report.html \
-  --week 34 --start 2026-08-16 --end 2026-08-22
+  --week 33 --start 2026-08-16 --end 2026-08-22
 ```
+
+`--week` must be the team week number **of that same Sunday–Saturday window**
+(`npm run week -- <start-date>` confirms it). It is also the idempotency key —
+a wrong number both mislabels the report and blocks the right week's report
+from ever publishing.
 
 Write the HTML to the session's scratch space, never into the repo. Do not put
 anything in the report that is not already visible on the board or in the PRs
