@@ -57,23 +57,26 @@ export function cleanKey(value: string): string {
 }
 
 /**
- * Pull request badges are rendered as links, so anything that is not an http(s)
- * URL is refused rather than shown as a link that goes nowhere.
+ * Anything the UI turns into a link: it has to be an http(s) URL, or it is
+ * refused rather than rendered as a link that goes nowhere.
  */
+export function cleanHttpUrl(value: string, field = "URL"): string {
+  const url = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`"${url}" is not a URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${field} "${url}" must be http or https`);
+  }
+  return url;
+}
+
+/** Pull request badges are links, so each one goes through `cleanHttpUrl`. */
 export function cleanPrUrls(urls: readonly string[]): string[] {
-  return urls.map((raw) => {
-    const url = raw.trim();
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new Error(`"${url}" is not a URL`);
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(`Pull request URL "${url}" must be http or https`);
-    }
-    return url;
-  });
+  return urls.map((raw) => cleanHttpUrl(raw, "Pull request URL"));
 }
 
 /** Optional single-line text such as a tag or an assignee name. */

@@ -20,6 +20,11 @@ convex/
                      agentReply / agentCommand / agentMarkRead / agentMarkHandled，
                      要 permAgent）。指令只是一則訊息，看板由使用者的瀏覽器去改；
                      agentWatch 是助理 WebSocket 訂閱的「還沒讀到的事件」
+  notifications.ts   進度追蹤：使用者那半邊（mine / dismiss，要 permRead）與 tracker 那半邊
+                     （trackerSend / trackerBroadcast / trackerPendingRechecks /
+                     trackerResolveRecheck / trackerReportUploadUrl /
+                     trackerPublishReport，要 permTracker）。tracker 改看板走的是
+                     一般的 board:* mutation，所以這裡沒有任何寫看板的程式碼
   auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
                      requireEdit / requirePermission、login / register /
                      pendingUsers / approve / dismiss，以及 internal 的
@@ -46,6 +51,7 @@ src/
   hooks/             useStatusCycle — 狀態燈號的點擊循環與 debounce
                      useCommandExecutor — 認領並執行助理下的指令
   components/        AuthProvider — 憑證的 context（訂閱 auth:login）
+                     NotificationBell — header 右側的第二個鈴鐺（進度追蹤通知）
                      LoginScreen — 登入／註冊表單與等待審核的畫面
                      AccountBar — header 右側：收件匣鈴鐺（註冊／待審編輯／我的提議）、
                      帳號、唯讀或提議徽章、登出
@@ -69,6 +75,10 @@ docs/                本目錄：資料模型、專案結構、進度
                      的分工、指令格式、結果狀態機與紅線；
                      scripts/agent-call.mjs 是一次 HTTP 呼叫，
                      scripts/listen.mjs 是「阻塞到有事發生就結束」的 WebSocket listener
+  board-tracker/     當進度追蹤器的 skill：四個排程職責、卡住的定義、週報章節與紅線；
+                     scripts/tracker-call.mjs 是一次 HTTP 呼叫，
+                     scripts/workdays.mjs 算工作日（排除週末，含自我測試），
+                     scripts/upload-report.mjs 上傳週報並廣播
 ```
 
 `convex/_generated/` 有進版控，所以剛 clone 下來不需要先登入 Convex 就能 `npm run build`。
@@ -85,7 +95,7 @@ docs/                本目錄：資料模型、專案結構、進度
 
 `permEditRequest` 的人走的是**同一個** `canEdit`，所以拖曳、modal、燈號一個不少；差別只有 `requestMode` 控制的文案（「提議修改」而不是「儲存」）與卡片上的「待審…」badge。前端沒有第二條呼叫路徑，樂觀更新也不用分岔——mutation 是同一個，要不要當提議由後端決定。
 
-鈴鐺在 `AccountBar`（header 右上，和帳號、徽章、登出按鈕同一排），是一個收件匣，最多三段，**每一段只在對應權限存在時才訂閱**（訂閱一個會拒絕自己的 query 會讓錯誤穿過 header）：`permApproveRegister` → 待審註冊（`auth:pendingUsers`）、`permWrite` → 待審編輯（`editRequests:list`）、`permEditRequest` → 我的提議（`editRequests:mine`）。紅點的條件是「有人在等你」——待審註冊或待審編輯，自己提出的不算。兩個審核權限彼此獨立，所以只有寫入權的人看到編輯那一段、只有註冊審核權的人看到註冊那一段。
+鈴鐺（其實有兩個，右邊那個是收件匣、左邊那個是進度追蹤通知，見「進度追蹤」）在 `AccountBar`（header 右上，和帳號、徽章、登出按鈕同一排）。收件匣，最多三段，**每一段只在對應權限存在時才訂閱**（訂閱一個會拒絕自己的 query 會讓錯誤穿過 header）：`permApproveRegister` → 待審註冊（`auth:pendingUsers`）、`permWrite` → 待審編輯（`editRequests:list`）、`permEditRequest` → 我的提議（`editRequests:mine`）。紅點的條件是「有人在等你」——待審註冊或待審編輯，自己提出的不算。兩個審核權限彼此獨立，所以只有寫入權的人看到編輯那一段、只有註冊審核權的人看到註冊那一段。
 
 註冊那段的「通過」只給 `permRead`，這件事寫在選單的註腳上，因為那是最容易誤會的地方。編輯那段每一列直接把 diff 攤開（誰、哪張卡、什麼 → 什麼），因為審核者要決定的就是那幾行，不該再去看板上找。
 
@@ -132,6 +142,39 @@ docs/                本目錄：資料模型、專案結構、進度
 **Escalation：被排除的對話還是有人看著。** `listen.mjs --escalate <帳號…> --grace 5` 是同一個腳本的第二個模式：訂閱一樣的 `messages:agentWatch`，但**不標已讀、不認領**——它看的每一列都是別人的。看到那些帳號的新 `userMessage` 就起一個 grace（預設 5 秒）計時器，到期用 `messages:agentRead` 重讀那條對話：有 `readAt`（或已 `handled`）就表示 sub-agent 還活著，繼續等下一則；還是沒讀就印出一個 `type: "escalation"` 事件並結束程序，main agent 被喚醒後重派（事件沒被認領，所以接手的人看得到全部內容）。因為判定只讀 `readAt`，**後端一行都不用改**；grace 刻意設得很短——誤報只花一次查詢，漏報是一個人對著沒反應的聊天窗坐著。
 
 分工的另一半在 sub-agent 身上：接手一條對話之後**它自己**用 `listen.mjs --account <帳號>` 監看後續訊息（main agent 已經把這個帳號排除了，沒有人會替它接），對話告一段落才 `agentMarkHandled` 並回報。
+
+## 進度追蹤：通知那個鈴鐺，與一個什麼都不寫的 agent
+
+`notifications` / `reports` 兩張表、`permTracker` 與 dismiss→複查的語意在
+`docs/data-model.md` 的「進度追蹤與通知」。這裡是實作上四件值得知道的事。
+
+**後端沒有為 tracker 加任何寫看板的路。** tracker 帳號沒有 `permWrite`，所以它呼叫
+`board:updateTicket` 的結果就是一筆待審提議——`convex/board.ts`、`apply.ts`、
+`editRequests.ts` 一行都沒改（實測：tracker 送一次 `updateTicket`，看板沒變、有寫入權
+的人的鈴鐺多一列 diff）。`convex/notifications.ts` 只有通知與週報，**不 import
+`apply.ts`**，也不 query `tickets`。要改 tracker 能做什麼，改的是它的權限與 skill，
+不是看板的寫入面。
+
+**第二個鈴鐺跟第一個是同一套視覺。** `NotificationBell` 和 `InboxBell` 是兄弟：同樣的
+trigger 樣式、同樣的紅點（`size-2` 的 rose 圓點加白色 ring）、同樣的 `w-96` dropdown
+面板。差別只有兩個——**它給每個人看**（`permRead` 就有，所以沒有「訂閱一個會拒絕自己的
+query」的問題，不需要條件式 `"skip"`），而紅點的條件單純是「清單不是空的」（通知本來
+就是給你的，沒有「別人在等你」這一層）。每一列是 `kind` 徽章 ＋ 時間 ＋ 純文字
+（`whitespace-pre-wrap`，tracker 寫的是幾行短句）＋ key 徽章 ＋ 一個「開啟」連結
+（`target="_blank"`）。**沒有任何延遲載入的必要**：沒有新依賴、沒有 markdown 渲染器，
+bundle 幾乎不動。
+
+**「進度」那一列的 × 說得出它會做什麼。** `title` / `aria-label` 是「知道了，請
+tracker 複查」，面板底下還有一行註腳。因為那個按鈕不是「隱藏」——它會讓 tracker 再查
+一次，而使用者有權知道自己按下去等於做了一個宣稱（語意在 data-model.md）。
+
+**排程在 Routine，不在程式裡。** 四個 Routine（兩次巡邏、週一週報、每小時複查掃描）各
+自開一個**新 session**，prompt 只說「哪個職責 ＋ 哪個 deployment ＋ 先讀
+`.claude/skills/board-tracker/SKILL.md`」，憑證從執行環境的環境變數來。所以這個 repo
+裡沒有 cron 設定檔也沒有排程程式碼——時間表與 UTC 換算寫在 skill 的「Scheduling」。
+工作日換算一律走 `scripts/workdays.mjs`（週末以 Asia/Taipei 判斷，UTC+8 沒有 DST 所以
+是常數位移；`node workdays.mjs test` 有 10 個固定 fixture，含跨週末與門檻邊界），
+週次換算一律走 `npm run week`。
 
 ## 時間區間與 lazy loading
 

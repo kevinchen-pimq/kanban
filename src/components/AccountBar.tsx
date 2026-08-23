@@ -3,6 +3,7 @@ import { Bell, Check, LogOut, Undo2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useAuth, useSession } from "@/components/AuthProvider";
+import { NotificationBell } from "@/components/NotificationBell";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -27,6 +28,10 @@ import { api } from "../../convex/_generated/api";
  * dot means "somebody is waiting for you": a pending registration or a pending
  * edit request. Own proposals do not raise it — nobody is waiting for the person
  * who made them.
+ *
+ * Next to it sits the tracker's bell (`NotificationBell`), built the same way but
+ * shown to everybody: the inbox is other people waiting for you, notifications are
+ * the tracker talking to you.
  */
 export function AccountBar() {
   const session = useSession();
@@ -35,6 +40,7 @@ export function AccountBar() {
 
   return (
     <div className="flex items-center gap-2">
+      <NotificationBell />
       {hasInbox && <InboxBell />}
 
       <span className="max-w-[160px] truncate font-mono text-xs text-slate-500">

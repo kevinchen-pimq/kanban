@@ -91,6 +91,13 @@ const configDoc = v.object({
   _creationTime: v.number(),
   jiraBaseUrl: v.optional(v.string()),
   assigneeColors: v.optional(v.record(v.string(), v.string())),
+  /**
+   * Assignee name → account name. Nothing in the UI reads it; it rides along
+   * because the config document is returned whole, and because it is how the
+   * board tracker turns a card's `assignee` into somebody it can notify (it
+   * calls `board:get` and nothing else — see `convex/notifications.ts`).
+   */
+  assigneeAccounts: v.optional(v.record(v.string(), v.string())),
 });
 
 /**

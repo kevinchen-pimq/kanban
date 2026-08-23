@@ -1,6 +1,6 @@
 # 當前進度
 
-_更新於 2026-08-21。_
+_更新於 2026-08-23。_
 
 ## 已完成
 
@@ -85,9 +85,33 @@ _更新於 2026-08-21。_
   這個 affordance，**只有 `permEditRequest` 的人是直接建立、不轉成提議**（週次列是
   日期推導的結構而不是內容，理由見 data-model.md），把卡片拖進新列照舊變提議。
   重新匯入不會刪掉這些列（`importBoard` 對 checkpoints 只 upsert）。
+- **進度追蹤與通知（`notifications` ＋ `reports` 表 ＋ tracker skill）**：header
+  多一個通知鈴鐺（跟審核鈴鐺同一套視覺），列出屬於自己的通知：`progress`（進度）、
+  `report`（週報）、`info`（通知）三種 kind，可以帶連結與卡片 key。另一端是一個
+  排程 agent（Routine 定時開新 session），帳號拿
+  `permRead + permEditRequest + permTracker`、**永遠沒有 `permWrite`**，所以它想改
+  看板時打的是同一組 `board:*` mutation，後端那個分岔自動把它變成一筆待審提議
+  ——**沒有為它開任何寫入路徑**（`board.ts`／`apply.ts`／`editRequests.ts`／
+  `messages.ts` 的行為零改動）。通知半邊是新的 `notifications:*` 八個函式：使用者
+  那半（`mine`／`dismiss`）要 `permRead`，tracker 那半（`trackerSend`／
+  `trackerBroadcast`／`trackerPendingRechecks`／`trackerResolveRecheck`／
+  `trackerReportUploadUrl`／`trackerPublishReport`）要 `permTracker`。
+  三個要記住的語意：**同一個人的 `progress` 通知會就地合併**（不會越積越多、也不
+  會因為更新跳到最上面）；**關掉 `progress` 通知等於請 tracker 複查**（進
+  `recheckPending` 佇列，下一輪巡邏處理完才刪掉，所以「關掉」≠「處理完」）；
+  **一個週次只能發一份週報**（`reports.weekNumber` 重複會被拒絕，比照
+  `addNextWeek` 的幂等設計，Monday routine 跑兩次不會廣播兩次）。通知列不是歷史
+  紀錄，是「還活著的工作狀態」（政策寫在 schema 與 data-model.md）。週報是一份
+  HTML，用 `upload-report.mjs` 上傳到 Convex storage 後把連結廣播給所有
+  `permRead` 的人。卡片的 `assignee` 要對到可以通知的帳號靠 `config.assigneeAccounts`
+  （用 internal 的 `data:setConfig` 維護）。工作日換算一律跑
+  `.claude/skills/board-tracker/scripts/workdays.mjs`（排除台北的週六日，附
+  fixtures 自測），tracker 的做法與紅線在
+  `.claude/skills/board-tracker/SKILL.md`。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
-  當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`）
+  當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`），
+  當進度追蹤器的流程整理成第三個（`.claude/skills/board-tracker/`）
 - Convex 靜態託管部署（production / dev 兩個 deployment）
 
 ## 尚未實作
@@ -99,3 +123,5 @@ _更新於 2026-08-21。_
 - Jira 同步自動化（目前由 Agent 依 skill 手動執行）
 - 使用者那邊的推播（助理已經是即時的，但使用者沒有瀏覽器通知；看板沒開著的時候
   指令就停在 `pending`）
+- 進度追蹤的排程本身（Routine 要在 Claude 那邊建，repo 裡只有 skill 與腳本），
+  以及週報的歷史頁（`reports` 表存了每週一份，但 UI 只給最新那則通知的連結）

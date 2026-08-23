@@ -9,7 +9,9 @@ TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex
 註冊要有人審核（見下方慣例與 `docs/data-model.md`）。看板右下角還有一個聊天助理：
 使用者跟一個 agent 對話，agent 只讀寫訊息（要 `permAgent`），要改看板時下指令，
 由**使用者的瀏覽器**用**使用者自己的憑證**執行；agent 靠 WebSocket 即時被喚醒，
-讀到訊息會即時回寫「已讀」。
+讀到訊息會即時回寫「已讀」。header 上還有第二個鈴鐺：一個被排程叫起來的
+進度追蹤器（tracker，要 `permTracker`）巡邏看板、發個人進度通知與週報，它拿的是
+`permEditRequest` 而不是 `permWrite`，所以它要改看板一律變成待審提議。
 
 ## 常用指令
 
@@ -65,7 +67,9 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
 | 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來、等訊息用 `scripts/listen.mjs`） |
+| 當進度追蹤器（巡邏、週報、複查）、動通知 | `.claude/skills/board-tracker/SKILL.md`（用 skill；憑證從環境變數來、工作日算 `scripts/workdays.mjs`） |
 | 動聊天／指令／已讀機制（`messages` 表、執行器、listener） | `docs/data-model.md` 的「看板助理的對話」＋ `docs/architecture.md` 的「看板助理」 |
+| 動通知／週報（`notifications`／`reports` 表、鈴鐺、複查迴圈） | `docs/data-model.md` 的「進度追蹤與通知」＋ `docs/architecture.md` 的「進度追蹤」 |
 
 ## Coding 原則
 
@@ -98,10 +102,12 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   `{ account, tokenHash }`（`tokenHash = sha256("kanban:<account>:<password>")`，
   在瀏覽器用 Web Crypto 算）當 `auth` 參數送進每一次呼叫；handler 第一行就是
   `requireRead` / `requireWrite` / `requireEdit` /
-  `requirePermission(..., "permApproveRegister" | "permAgent")`。
+  `requirePermission(..., "permApproveRegister" | "permAgent" | "permTracker")`。
   讀（`board:get`）要 `permRead`，寫（`board:moveTicket` / `reorderCell` /
   `createTicket` / `updateTicket` / `deleteTicket` / `addNextWeek`）要 `permWrite`
-  或 `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`；
+  或 `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`，
+  追蹤器那半邊的通知函式（`notifications:tracker*`）要 `permTracker`（使用者那半邊的
+  `notifications:mine` / `dismiss` 要 `permRead`）；
   唯一不收憑證的
   是 `staticHosting:getCurrentDeployment`（只有部署資訊，登入頁也要能提示更新）。
   **認證過不等於可信任**，欄位驗證照樣要跟匯入一樣嚴（標題非空、ISO 日期、PR
@@ -109,8 +115,8 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   **匯入、設定與帳號管理一律留在 internal**（`convex/data.ts` 的 `importBoard` /
   `setConfig`，`convex/auth.ts` 的 `seedUser` / `deleteUser` / `listUsers`）；
   `approve` 只會給 `permRead`，`permWrite`、`permEditRequest`、
-  `permApproveRegister` 與 `permAgent` 只能從終端機用 `seedUser` 給，UI 沒有這條
-  路。要再加公開函式前先想清楚它要哪個權限。
+  `permApproveRegister`、`permAgent` 與 `permTracker` 只能從終端機用 `seedUser` 給，
+  UI 沒有這條路。要再加公開函式前先想清楚它要哪個權限。
 - **`permEditRequest` 的人走同一組 `board:*` mutation，分岔在後端。** 有
   `permWrite` 就直接套用，只有 `permEditRequest` 就轉成 `editRequests` 的一筆提議
   （同一張卡的多次操作合併成一筆）。前端不分岔，樂觀更新也不分岔——要改編輯行為
@@ -133,9 +139,21 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   listener 自動標）跟處理完（`handled`）是兩件事，不要合併。助理**可以讀** Jira 與
   GitHub PR 來回答問題，**一個字都不准寫**（不 transition、不留言、不 merge）。
   **憑證只從環境變數來，不准寫進版控檔案**（做法見 `board-assistant` skill）。
+- **進度追蹤器永遠不拿 `permWrite`。** tracker 帳號是
+  `permRead + permEditRequest + permTracker`，所以它呼叫的還是那六個 `board:*`
+  mutation，被既有的分岔轉成一筆待審提議——`convex/board.ts` / `apply.ts` /
+  `editRequests.ts` 不需要為它多一行程式碼，也不要為它開任何直接寫入的路。
+  **通知不是聊天**：個人進度走 `notifications:trackerSend`（一個人身上只有一則活的
+  `progress`，再發就是原地刷新），聊天室屬於看板助理，tracker 不在那裡發言。
+  **關掉「進度」通知＝要求複查**（`recheckPending`），複查完才刪掉那一列——別把
+  「關掉」和「處理完」合併成一件事。週報一週一份，`weekNumber` 就是幂等的鑰匙，
+  重發同一週會被拒絕。tracker **可以讀** Jira 與 GitHub PR，**一個字都不准寫**
+  （不 transition、不留言、不 merge、不 approve）。工作日算 `scripts/workdays.mjs`、
+  週次算 `npm run week`，不要心算。**憑證只從環境變數來，週報 HTML 寫到 session 的
+  暫存區、不要寫進 repo**（做法見 `board-tracker` skill）。
 - **卡片不能換 Epic，也不能改 key。** 拖曳、編輯 modal 與 mutation 三處都擋掉；
   要換欄位或改 key 就改 payload 重新匯入。
-- **Jira 站台網址與負責人顏色住在 Convex 的 `config` 表**，不寫在程式裡；用
+- **Jira 站台網址、負責人顏色與負責人帳號對應住在 Convex 的 `config` 表**，不寫在程式裡；用
   `npx convex run data:setConfig` 設定（見 `docs/data-model.md`）。
 - `convex/_generated/` 有進版控；改了 `convex/` 之後要讓 `convex dev`
   重新產生並一起提交。

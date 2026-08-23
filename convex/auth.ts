@@ -20,7 +20,7 @@ import type { Doc } from "./_generated/dataModel";
  * the deliberate trade for not building sessions, rotation or revocation. See
  * `docs/data-model.md`.
  *
- * Five independent permissions, all false on registration:
+ * Six independent permissions, all false on registration:
  *
  * - `permRead` — read the board. False means "registered, awaiting approval".
  * - `permWrite` — edit it (drag, create, update, delete, status).
@@ -31,8 +31,12 @@ import type { Doc } from "./_generated/dataModel";
  *   replies and commands (`convex/messages.ts`). Held together with `permRead`
  *   and nothing else, which is what keeps an agent unable to write to the board:
  *   its commands are executed by the browser of the person it is talking to.
+ * - `permTracker` — be the board tracker: send notifications and publish the
+ *   weekly report (`convex/notifications.ts`). Held together with `permRead` and
+ *   `permEditRequest`, never `permWrite`, so every board change the tracker asks
+ *   for arrives as a proposal for somebody to approve.
  *
- * `approve` only ever grants `permRead`; the other four are handed out from a
+ * `approve` only ever grants `permRead`; the other five are handed out from a
  * terminal through `seedUser`, so no browser call can widen its own powers.
  */
 
@@ -60,7 +64,8 @@ type Permission =
   | "permWrite"
   | "permApproveRegister"
   | "permEditRequest"
-  | "permAgent";
+  | "permAgent"
+  | "permTracker";
 
 const PERMISSION_LABEL: Record<Permission, string> = {
   permRead: "讀取",
@@ -68,6 +73,7 @@ const PERMISSION_LABEL: Record<Permission, string> = {
   permApproveRegister: "審核註冊",
   permEditRequest: "提議編輯",
   permAgent: "看板助理",
+  permTracker: "進度追蹤",
 };
 
 /**
@@ -199,6 +205,7 @@ export const login = query({
       permApproveRegister: v.boolean(),
       permEditRequest: v.boolean(),
       permAgent: v.boolean(),
+      permTracker: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -217,6 +224,9 @@ export const login = query({
       // Nothing in the UI reads this — an agent has no UI. It is here so the
       // assistant can check its own credential with one HTTP call.
       permAgent: user.permAgent ?? false,
+      // Same idea for the tracker, which checks `permEditRequest: true` +
+      // `permTracker: true` + `permWrite: false` before it patrols at all.
+      permTracker: user.permTracker ?? false,
     };
   },
 });
@@ -247,6 +257,7 @@ export const register = mutation({
       permApproveRegister: false,
       permEditRequest: false,
       permAgent: false,
+      permTracker: false,
     });
     return null;
   },
@@ -327,8 +338,8 @@ export const dismiss = mutation({
  *
  * Internal, so it runs from a terminal against a chosen deployment and never
  * from a browser. This is how the first administrator gets in, and the only way
- * `permWrite` / `permApproveRegister` / `permEditRequest` / `permAgent` are ever
- * granted:
+ * `permWrite` / `permApproveRegister` / `permEditRequest` / `permAgent` /
+ * `permTracker` are ever granted:
  *
  * ```bash
  * npx convex run auth:seedUser '{"account":"someone",
@@ -339,10 +350,15 @@ export const dismiss = mutation({
  * npx convex run auth:seedUser '{"account":"agent","tokenHash":"<64 hex>",
  *   "permRead":true,"permWrite":false,"permApproveRegister":false,
  *   "permAgent":true}'
+ * # the board tracker: proposes, notifies, never writes
+ * npx convex run auth:seedUser '{"account":"tracker","tokenHash":"<64 hex>",
+ *   "permRead":true,"permWrite":false,"permApproveRegister":false,
+ *   "permEditRequest":true,"permTracker":true}'
  * ```
  *
- * `permEditRequest` and `permAgent` may be left out, which reads as false — so
- * calls written before either existed still mean what they meant.
+ * `permEditRequest`, `permAgent` and `permTracker` may be left out, which reads
+ * as false — so calls written before any of them existed still mean what they
+ * meant.
  *
  * The hash has to be computed outside — the same
  * `sha256("kanban:<account>:<password>")` the browser uses — which keeps this
@@ -357,6 +373,7 @@ export const seedUser = internalMutation({
     permApproveRegister: v.boolean(),
     permEditRequest: v.optional(v.boolean()),
     permAgent: v.optional(v.boolean()),
+    permTracker: v.optional(v.boolean()),
   },
   returns: v.object({ created: v.boolean() }),
   handler: async (ctx, args) => {
@@ -368,6 +385,7 @@ export const seedUser = internalMutation({
       permApproveRegister: args.permApproveRegister,
       permEditRequest: args.permEditRequest ?? false,
       permAgent: args.permAgent ?? false,
+      permTracker: args.permTracker ?? false,
     };
 
     const existing = await byAccount(ctx, account);
@@ -387,8 +405,9 @@ export const seedUser = internalMutation({
  * of what happened, so an account that no longer exists should not leave
  * something for a reviewer to approve in its name.
  *
- * So does their assistant conversation. A thread is addressed by account *name*,
- * so leaving it behind would hand it to whoever registers that name next.
+ * So does their assistant conversation, and so do their notifications. Both are
+ * addressed by account *name*, so leaving them behind would hand them to whoever
+ * registers that name next.
  */
 export const deleteUser = internalMutation({
   args: { account: v.string() },
@@ -396,12 +415,18 @@ export const deleteUser = internalMutation({
     deleted: v.boolean(),
     editRequestsDeleted: v.number(),
     messagesDeleted: v.number(),
+    notificationsDeleted: v.number(),
   }),
   handler: async (ctx, args) => {
     const account = cleanAccount(args.account);
     const user = await byAccount(ctx, account);
     if (!user) {
-      return { deleted: false, editRequestsDeleted: 0, messagesDeleted: 0 };
+      return {
+        deleted: false,
+        editRequestsDeleted: 0,
+        messagesDeleted: 0,
+        notificationsDeleted: 0,
+      };
     }
 
     const requests = await ctx.db
@@ -416,11 +441,18 @@ export const deleteUser = internalMutation({
       .collect();
     for (const message of messages) await ctx.db.delete(message._id);
 
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_account", (q) => q.eq("account", account))
+      .collect();
+    for (const notification of notifications) await ctx.db.delete(notification._id);
+
     await ctx.db.delete(user._id);
     return {
       deleted: true,
       editRequestsDeleted: requests.length,
       messagesDeleted: messages.length,
+      notificationsDeleted: notifications.length,
     };
   },
 });
@@ -436,6 +468,7 @@ export const listUsers = internalQuery({
       permApproveRegister: v.boolean(),
       permEditRequest: v.boolean(),
       permAgent: v.boolean(),
+      permTracker: v.boolean(),
     }),
   ),
   handler: async (ctx) => {
@@ -449,6 +482,7 @@ export const listUsers = internalQuery({
         permApproveRegister: user.permApproveRegister,
         permEditRequest: user.permEditRequest ?? false,
         permAgent: user.permAgent ?? false,
+        permTracker: user.permTracker ?? false,
       }));
   },
 });

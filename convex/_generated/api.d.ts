@@ -14,6 +14,7 @@ import type * as board from "../board.js";
 import type * as data from "../data.js";
 import type * as editRequests from "../editRequests.js";
 import type * as messages from "../messages.js";
+import type * as notifications from "../notifications.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as validation from "../validation.js";
 
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   data: typeof data;
   editRequests: typeof editRequests;
   messages: typeof messages;
+  notifications: typeof notifications;
   staticHosting: typeof staticHosting;
   validation: typeof validation;
 }>;

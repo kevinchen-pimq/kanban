@@ -77,6 +77,21 @@ export const editFieldsValidator = v.object({
   githubPrs: v.optional(v.union(v.array(v.string()), v.null())),
 });
 
+/**
+ * What one notification is about — the three things the tracker has to say.
+ *
+ *   progress — "you are behind, here is the picture". Personal, and the only
+ *              kind that *merges*: one live row per person, refreshed in place.
+ *              Dismissing it is a claim of "caught up" and asks for a recheck.
+ *   report   — the weekly report, broadcast to everybody, with a link.
+ *   info     — anything else (「進度已追上」, a degraded patrol). Dismiss hides it.
+ */
+export const notificationKindValidator = v.union(
+  v.literal("progress"),
+  v.literal("report"),
+  v.literal("info"),
+);
+
 /** Who wrote a chat message: the person, or the board assistant agent. */
 export const messageRoleValidator = v.union(
   v.literal("user"),
@@ -243,6 +258,13 @@ export default defineSchema({
     // the person it is talking to, with that person's permissions. Optional for
     // the same reason as `permEditRequest`: absent is false.
     permAgent: v.optional(v.boolean()),
+    // Be the board tracker: send notifications and publish the weekly report
+    // (`convex/notifications.ts`). A tracker account holds this plus `permRead`
+    // and `permEditRequest`, and *never* `permWrite` — which is what turns every
+    // board change it asks for into a pending edit request a human approves.
+    // Optional for the same reason as the two above: absent is false, and it is
+    // only grantable from a terminal through `seedUser`.
+    permTracker: v.optional(v.boolean()),
   })
     // `account` is the natural key every credential check looks up.
     .index("by_account", ["account"]),
@@ -335,6 +357,74 @@ export default defineSchema({
     // Also what the listener subscribes to (unhandled ∩ unread).
     .index("by_handled", ["handled"]),
 
+  // What the board tracker has to tell somebody: the bell next to the inbox.
+  //
+  // Rows are **live working state, not history**. Nothing here records what was
+  // once said: a `report` or `info` row is deleted the moment its owner dismisses
+  // it, and a `progress` row survives a dismiss only as the recheck ticket
+  // described below, which the tracker deletes when it closes it. So the table
+  // holds what is on screen right now plus what the tracker still owes an answer
+  // to, and nothing else — the same choice `editRequests` makes.
+  //
+  // **`progress` merges.** At most one live progress notification per account: a
+  // second one replaces the content of the first in place (see
+  // `notifications:trackerSend`), because a patrol runs twice a day and re-sending
+  // "here is your current picture" must not stack. Its position in the list does
+  // not bump — it is the same notification refreshed, not news.
+  //
+  // **Dismiss → recheck.** Dismissing a `progress` row is a claim of "I've caught
+  // up", so it stamps `dismissedAt` *and* `recheckPending`: the row leaves the
+  // owner's list and lands in `trackerPendingRechecks`, where the tracker's hourly
+  // scan re-runs that person's checks and closes it with
+  // `trackerResolveRecheck` — confirming, or sending a fresh progress
+  // notification. Dismissing `report` / `info` asks for nothing, so those rows
+  // just go away.
+  notifications: defineTable({
+    // Whose notification this is — an `account` from `users`, checked to exist
+    // and to have `permRead` when the tracker sends it.
+    account: v.string(),
+    kind: notificationKindValidator,
+    // Plain text (line breaks welcome), rendered as text by the UI. Kept human:
+    // the person reads this in a small panel, not a report.
+    text: v.string(),
+    // Something to open — the weekly report, a PR, a Jira issue. Rendered as
+    // 「開啟」 rather than inline, so a missing link costs no layout.
+    link: v.optional(v.string()),
+    // Ticket keys this is about. Keys, never Convex ids: the tracker reads them
+    // off the board and they mean the same thing in every deployment.
+    keys: v.optional(v.array(v.string())),
+    // When the owner dismissed it. Present means it is off their list.
+    dismissedAt: v.optional(v.number()),
+    // Set together with `dismissedAt` on a `progress` row: "this person says they
+    // are caught up — go and check". Cleared by deleting the row.
+    recheckPending: v.optional(v.boolean()),
+  })
+    // One person's list, newest first.
+    .index("by_account", ["account"])
+    // The tracker's recheck queue, without scanning everybody's notifications.
+    .index("by_recheck", ["recheckPending"]),
+
+  // Weekly reports the tracker has published: one row per week, one HTML file in
+  // Convex storage.
+  //
+  // `weekNumber` is the idempotency key, exactly as in `board:addNextWeek`: a
+  // Monday routine that fires twice, or a retry that never saw its answer, must
+  // not broadcast the same report to everybody again, so publishing a week that
+  // already exists is refused.
+  reports: defineTable({
+    // The team's own checkpoint number (Sunday–Saturday), not the ISO week.
+    weekNumber: v.number(),
+    // The window the report covers, ISO dates, inclusive on both ends.
+    startDate: v.string(),
+    endDate: v.string(),
+    // The uploaded HTML file. The notification links to its storage URL.
+    storageId: v.id("_storage"),
+    // What the broadcast called it, e.g. "W34 週報".
+    title: v.optional(v.string()),
+  })
+    // The duplicate check, and how a report for a given week is found again.
+    .index("by_week", ["weekNumber"]),
+
   // Board-wide settings, as a single document (the first row wins).
   //
   // These are deployment settings rather than board data: the Jira site the
@@ -350,5 +440,12 @@ export default defineSchema({
     // { "Some Person": "#7c2d12" }. Names absent from the map fall back to a
     // colour derived from the name in the UI.
     assigneeColors: v.optional(v.record(v.string(), v.string())),
+    // Assignee name (exactly as it appears on the ticket) → account name, e.g.
+    // { "Some Person": "someone" }. This is the only bridge between a card's
+    // `assignee` string, which comes from Jira, and an account that can be sent a
+    // notification, so the tracker sends nothing to a name that is missing here
+    // (it says so in its session output instead of guessing). Maintained through
+    // `data:setConfig` like the colours, and replaced whole for the same reason.
+    assigneeAccounts: v.optional(v.record(v.string(), v.string())),
   }),
 });

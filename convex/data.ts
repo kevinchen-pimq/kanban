@@ -322,8 +322,9 @@ export const removeTickets = internalMutation({
 });
 
 /**
- * Set the board's configuration: the Jira site its keys link to, and the fixed
- * avatar colour of each teammate.
+ * Set the board's configuration: the Jira site its keys link to, the fixed
+ * avatar colour of each teammate, and which account each assignee name belongs
+ * to.
  *
  * Internal on purpose. Board settings are an operator's job, done from a
  * terminal against a chosen deployment:
@@ -331,17 +332,24 @@ export const removeTickets = internalMutation({
  * ```bash
  * npx convex run data:setConfig '{"jiraBaseUrl":"https://example.atlassian.net/browse"}'
  * npx convex run data:setConfig '{"assigneeColors":{"Some Person":"#7c2d12"}}'
+ * npx convex run data:setConfig '{"assigneeAccounts":{"Some Person":"someone"}}'
  * ```
  *
- * Only the fields given in the call change, so the two lines above are
- * independent. `assigneeColors`, when given, *replaces* the whole map rather
- * than merging into it — that is what makes removing a person possible, so
- * always send the complete set.
+ * Only the fields given in the call change, so the three lines above are
+ * independent. `assigneeColors` and `assigneeAccounts`, when given, *replace* the
+ * whole map rather than merging into it — that is what makes removing a person
+ * possible, so always send the complete set.
+ *
+ * `assigneeAccounts` maps a card's `assignee` (a name that came from Jira) to an
+ * account name, and it is the only bridge the tracker has between the two: a name
+ * that is not in the map gets no progress notification at all. Keys must match
+ * the ticket's `assignee` exactly, like the colours.
  */
 export const setConfig = internalMutation({
   args: {
     jiraBaseUrl: v.optional(v.string()),
     assigneeColors: v.optional(v.record(v.string(), v.string())),
+    assigneeAccounts: v.optional(v.record(v.string(), v.string())),
   },
   returns: v.object({ created: v.boolean() }),
   handler: async (ctx, args) => {
@@ -349,6 +357,9 @@ export const setConfig = internalMutation({
       ...(args.jiraBaseUrl !== undefined && { jiraBaseUrl: args.jiraBaseUrl }),
       ...(args.assigneeColors !== undefined && {
         assigneeColors: args.assigneeColors,
+      }),
+      ...(args.assigneeAccounts !== undefined && {
+        assigneeAccounts: args.assigneeAccounts,
       }),
     };
 
@@ -370,6 +381,7 @@ export const getConfig = internalQuery({
     v.object({
       jiraBaseUrl: v.optional(v.string()),
       assigneeColors: v.optional(v.record(v.string(), v.string())),
+      assigneeAccounts: v.optional(v.record(v.string(), v.string())),
     }),
   ),
   handler: async (ctx) => {
@@ -378,6 +390,7 @@ export const getConfig = internalQuery({
     return {
       jiraBaseUrl: config.jiraBaseUrl,
       assigneeColors: config.assigneeColors,
+      assigneeAccounts: config.assigneeAccounts,
     };
   },
 });
