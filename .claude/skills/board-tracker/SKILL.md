@@ -187,14 +187,28 @@ quietly — no notifications, no proposals, no noise.
 4. **Propose fixes** for every mismatch that has a clear right answer (usually
    `updateTicket` with the status Jira implies). Each proposal needs a state
    you could narrate in one sentence; if the right fix is ambiguous, put it in
-   the notification text instead of guessing a proposal.
+   the notification text instead of guessing a proposal. Proposals live in
+   the approval bell — **never restate them in a notification**; the
+   notification is for what a person must do, not for what you did.
 5. **Personal progress notifications** (`kind: "progress"`) to each person who
-   is behind — meaning they own a stuck PR, or they have non-done cards
-   sitting in a week that has already ended. One notification per person
-   carrying their whole current picture (keys, what is stuck and why, what was
-   proposed); the merge semantics make re-sending safe. Map ticket `assignee`
-   names to accounts through `config.assigneeAccounts`; a name with no mapping
-   gets no notification — mention it in the session output instead.
+   is behind — meaning they own a stuck PR, they have non-done cards sitting
+   in a week that has already ended, or they own a card with no Jira ticket
+   behind it (a `LOCAL-*` key — every board card should be tracked in Jira,
+   so ask them to open one). One notification per person carrying their whole
+   current picture; the merge semantics make re-sending safe.
+
+   **Write a push, not a status readout.** Every line ends in the next
+   action and who it is waiting on. A stuck PR is always waiting on
+   somebody — read its state and say which move unblocks it: reviews still
+   pending → ask the reviewer to go review it (when the reviewer's GitHub
+   username matches a board account, send *them* that ask as their own
+   notification; otherwise put it in the owner's text — 「請提醒 <reviewer>
+   review」); review comments awaiting the author → ask the owner to turn
+   revisions around faster, at least a round a day.
+
+   Map ticket `assignee` names to accounts through `config.assigneeAccounts`;
+   a name with no mapping gets no notification — mention it in the session
+   output instead.
 6. **Do not repeat yourself.** A person already carrying a live progress
    notification gets it refreshed (that is what `trackerSend` does), not a
    second one. A mismatch already covered by a pending edit request — yours or
