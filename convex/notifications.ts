@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -551,5 +552,37 @@ export const trackerPublishReport = mutation({
 
     const accounts = await broadcast(ctx, sender, content);
     return { reportId, url, title, sent: accounts.length, accounts };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Internal — terminal-only maintenance
+// ---------------------------------------------------------------------------
+
+/**
+ * Wipe the tracker's working data — every notification and every report,
+ * report files in storage included. Internal, like import and account
+ * management: this is a terminal reset for a dev deployment between test runs
+ * (a published week number blocks re-publishing that week), never something a
+ * public caller can reach.
+ *
+ * ```bash
+ * npx convex run notifications:clearTrackerData
+ * ```
+ */
+export const clearTrackerData = internalMutation({
+  args: {},
+  returns: v.object({ notifications: v.number(), reports: v.number() }),
+  handler: async (ctx) => {
+    const notifications = await ctx.db.query("notifications").collect();
+    for (const row of notifications) await ctx.db.delete(row._id);
+
+    const reports = await ctx.db.query("reports").collect();
+    for (const row of reports) {
+      await ctx.storage.delete(row.storageId);
+      await ctx.db.delete(row._id);
+    }
+
+    return { notifications: notifications.length, reports: reports.length };
   },
 });
