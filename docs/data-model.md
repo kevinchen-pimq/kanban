@@ -1,14 +1,16 @@
 # 資料模型
 
-`convex/schema.ts` 七張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關，一張是聊天：
+`convex/schema.ts` 九張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關，一張是聊天，兩張是進度追蹤：
 
 - **`epics`** — X 軸的欄。`code`（如 `DEMO-BOARD`）、`name`、`accent` 顏色鍵、`order` 決定左右順序。
 - **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`；週別存 `weekNumber` 與 `startDate`/`endDate`（ISO 日期字串）。**列的順序由日期推導**，不看 payload 給的 `order`——週次有真實日期，從日期排就不可能因為匯入時 `order` 給錯而排亂（這個錯踩過一次）。backlog 永遠在最後。
 - **`tickets`** — 卡片。以 `epicId` + `checkpointId` 決定落在哪一格，`status` 是四個燈號之一。`assignee` / `dueDate` / `githubPrs` / `tag` 皆為選填。
 - **`config`** — 看板設定，只有一筆文件（讀取時取第一筆）。存 `jiraBaseUrl` 與 `assigneeColors`，見下方。
-- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與五個獨立的布林權限，見「登入與權限」。
+- **`users`** — 帳號。`account`（唯一，有 `by_account` 索引）、`tokenHash` 與六個獨立的布林權限，見「登入與權限」。
 - **`editRequests`** — 還沒被審核的編輯提議，一筆對應一張卡（或一格的排序）。只有 `permEditRequest` 的人做的編輯會落在這裡，見「編輯提議」。
 - **`messages`** — 看板助理的聊天訊息，一個帳號一條對話。助理的指令也是一則訊息，帶著它的執行狀態，見「看板助理的對話」。
+- **`notifications`** — 進度追蹤器要跟某個人說的話（header 的第二個鈴鐺）。**活的狀態，不是歷史**，見「進度追蹤與通知」。
+- **`reports`** — 已經發布的週報，一週一筆，HTML 檔在 Convex storage，見同一節。
 
 ## 狀態燈號
 
@@ -37,17 +39,19 @@ Jira 狀態名稱 → 燈號的完整對應表在 `.claude/skills/jira-board-imp
 | --- | --- |
 | `jiraBaseUrl` | Jira browse 根網址，例如 `https://example.atlassian.net/browse`。卡片的 key 連到 `<jiraBaseUrl>/<KEY>`；**沒設定時 key 就是純文字，不會變成連結**（不給死連結）。 |
 | `assigneeColors` | 負責人姓名 → 頭像顏色（hex），例如 `{ "Some Person": "#7c2d12" }`。key 要和票上的 `assignee` **完全一致**。 |
+| `assigneeAccounts` | 負責人姓名 → 帳號名稱，例如 `{ "Some Person": "someone" }`。key 同樣要和 `assignee` 完全一致。這是**進度追蹤器唯一**能把「卡片上的名字」對到「可以收通知的帳號」的橋；沒對到的名字就不會收到進度通知（tracker 會把它寫在 session 輸出裡，不會亂猜）。 |
 
 寫入只有 internal 的 `data:setConfig`，從終端機對指定 deployment 執行（沒有新增任何公開寫入端點）：
 
 ```bash
 npx convex run data:setConfig '{"jiraBaseUrl":"https://example.atlassian.net/browse"}'
 npx convex run data:setConfig '{"assigneeColors":{"Some Person":"#7c2d12","Other Person":"#1e3a8a"}}'
+npx convex run data:setConfig '{"assigneeAccounts":{"Some Person":"someone"}}'
 npx convex run data:getConfig            # 讀回來確認存了什麼
 npx convex run data:setConfig ... --prod  # 對 production 設定
 ```
 
-只有帶到的欄位會變，所以上面兩行互不干擾。但 `assigneeColors` 一給就是**整份取代**（這樣才能移除某個人），要改一個人也得把完整名單一起送。
+只有帶到的欄位會變，所以上面幾行互不干擾。但 `assigneeColors` 與 `assigneeAccounts` 一給就是**整份取代**（這樣才能移除某個人），要改一個人也得把完整名單一起送。
 
 設定隨 `board:get` 一起回傳，不另開一個 query：它是一份每張卡片都要用的小文件，看板本來就只維持一個 subscription；分成兩個 query 會多一個載入狀態，卡片也會先畫成沒有連結、再重畫一次。前端把它放進 context（`BoardConfigProvider`），卡片直接讀，不用一路傳 props。
 
@@ -64,10 +68,13 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 | `permEditRequest` | 能不能**提議**編輯。選填欄位——在這個功能之前建立的帳號沒有它，讀不到就當 false |
 | `permApproveRegister` | 能不能看到並處理待審註冊 |
 | `permAgent` | 能不能當看板助理——讀寫聊天訊息、對別人的對話下指令。選填欄位，讀不到就當 false |
+| `permTracker` | 能不能當進度追蹤器——發通知、發布週報（`convex/notifications.ts`）。選填欄位，讀不到就當 false |
 
-五個權限彼此獨立，任何組合都成立。只有 `permRead` 是唯讀；`permRead + permEditRequest` 看到完整的編輯介面，但每個動作變成一筆待審的提議（見下面的 `editRequests`）；`permWrite` 直接寫入，永遠不會產生提議。兩個都有的時候 `permWrite` 贏。
+六個權限彼此獨立，任何組合都成立。只有 `permRead` 是唯讀；`permRead + permEditRequest` 看到完整的編輯介面，但每個動作變成一筆待審的提議（見下面的 `editRequests`）；`permWrite` 直接寫入，永遠不會產生提議。兩個都有的時候 `permWrite` 贏。
 
 `permAgent` 是給機器的，而且刻意只給一件事的權力：助理帳號拿 `permRead + permAgent`，**沒有 `permWrite`、也沒有 `permEditRequest`**，所以它讀得到看板、講得出話，但改不動任何一張卡（見下面的「看板助理的對話」）。
+
+`permTracker` 也是給機器的，形狀不一樣：追蹤器帳號拿 `permRead + permEditRequest + permTracker`，**永遠沒有 `permWrite`**——所以它想改看板時走的是**同一組** `board:*` mutation，然後被既有的分岔轉成一筆待審提議。它多出來的權力只有「跟人說話」和「發布週報」這兩件（見「進度追蹤與通知」）。
 
 **密碼永遠不離開瀏覽器。** hash 在前端用 Web Crypto（`crypto.subtle.digest`）算（`src/lib/auth.ts` 的 `computeTokenHash`），只有 hash 會被送出、存進 `users`、寫進 localStorage 的 `kanban.auth.v1`。所以後端沒有任何地方看得到、存得到或 log 得到明文密碼。帳號名稱是 hash 的一部分，所以正規化必須兩邊一致——前端在 hash 之前先做，後端用同一條規則再做一次。
 
@@ -81,7 +88,7 @@ npx convex run data:setConfig ... --prod  # 對 production 設定
 requireRead(ctx, auth)                          → permRead，否則丟 AUTH_DENIED
 requireWrite(ctx, auth)                         → permWrite
 requireEdit(ctx, auth)                          → permWrite 或 permEditRequest（回 user，讓 handler 自己分岔）
-requirePermission(ctx, auth, "permApproveRegister")   // 或 "permAgent"
+requirePermission(ctx, auth, "permApproveRegister")   // 或 "permAgent" / "permTracker"
 ```
 
 查不到帳號和 hash 不符回同一個答案（不告訴陌生人有哪些帳號存在）。錯誤訊息都帶 `AUTH_DENIED` 前綴，前端據此把失效的憑證清掉、退回登入頁，而不是在空看板上蓋一塊紅字。
@@ -90,16 +97,16 @@ requirePermission(ctx, auth, "permApproveRegister")   // 或 "permAgent"
 
 | 函式 | 型別 | 需要的權限 | 做什麼 |
 | --- | --- | --- | --- |
-| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permEditRequest`、`permApproveRegister`、`permAgent`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢。UI 不看 `permAgent`，它在那裡是為了讓助理用一次 HTTP 呼叫驗自己的憑證 |
-| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，五個權限**全部 false**；帳號重複拒絕 |
+| `auth:login` | query | 不需要 | 回 `invalid` / `pending` / `ok`（含 `permWrite`、`permEditRequest`、`permApproveRegister`、`permAgent`、`permTracker`）。**刻意不丟錯**：它同時是登入表單的答案與看板持續訂閱的那個查詢。UI 不看 `permAgent` 與 `permTracker`，它們在那裡是為了讓助理／追蹤器用一次 HTTP 呼叫驗自己的憑證 |
+| `auth:register` | mutation | 不需要 | 用前端算好的 hash 建帳號，六個權限**全部 false**；帳號重複拒絕 |
 | `auth:pendingUsers` | query | `permApproveRegister` | 待審帳號（`permRead=false`），最舊的在前 |
 | `auth:approve` | mutation | `permApproveRegister` | **只設 `permRead=true`**，不會給其他權限 |
 | `auth:dismiss` | mutation | `permApproveRegister` | 刪掉那筆註冊，名字就釋放出來。已經過審的帳號拒絕刪（誤點鈴鐺不該砍掉在用的帳號） |
-| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，五個權限都自己指定（`permEditRequest` 與 `permAgent` 選填，不給就是 false）。第一個管理員從這裡進來 |
-| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議，以及他的聊天訊息（對話是用帳號名稱定位的，留著會被同名新帳號讀到） |
+| `auth:seedUser` | **internal** | — | 建立／覆寫帳號，六個權限都自己指定（`permEditRequest`、`permAgent`、`permTracker` 選填，不給就是 false）。第一個管理員從這裡進來 |
+| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議、他的聊天訊息與他的通知（對話與通知都是用帳號名稱定位的，留著會被同名新帳號讀到） |
 | `auth:listUsers` | **internal** | — | 列出帳號與權限（不回 hash） |
 
-`permWrite`、`permEditRequest`、`permApproveRegister` 與 `permAgent` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
+`permWrite`、`permEditRequest`、`permApproveRegister`、`permAgent` 與 `permTracker` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
 
 ```bash
 # hash 要在外面算：sha256("kanban:<account>:<password>")
@@ -113,6 +120,9 @@ npx convex run auth:seedUser '{"account":"someone","tokenHash":"<64 hex>",
 # 看板助理帳號：讀得到看板、能講話，改不動任何東西
 npx convex run auth:seedUser '{"account":"agent","tokenHash":"<64 hex>",
   "permRead":true,"permAgent":true}'
+# 進度追蹤器帳號：讀得到看板、會發通知，改看板一律變成待審提議
+npx convex run auth:seedUser '{"account":"tracker","tokenHash":"<64 hex>",
+  "permRead":true,"permEditRequest":true,"permTracker":true}'
 npx convex run auth:listUsers
 npx convex run auth:deleteUser '{"account":"someone"}'
 npx convex run auth:seedUser ... --prod   # 對 production
@@ -139,7 +149,7 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 | `addNextWeek` | 在最新週次後面加一列（預排下週） | 只收「哪一週」，日期由伺服器推導；必須剛好是最新週次 +1；該週已存在就直接回傳（見下一小節） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面六個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面六個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`notifications:*` 的八個函式（見「進度追蹤與通知」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
@@ -321,3 +331,94 @@ key 與 code 的解析在**前端**做（`src/lib/assistant.ts` 的 `resolveComm
 助理那半邊是**公開函式**而不是 internal，因為它跑在沒有 Convex 憑證的容器裡：它跟瀏覽器一樣送 `{ account, tokenHash }`——一次性的呼叫打 `POST /api/query` 與 `/api/mutation`，等訊息的時候用 Convex 的 WebSocket 訂閱 `agentWatch`。做法與紅線寫在 `.claude/skills/board-assistant/SKILL.md`。**憑證不進版控**——那份 skill 只說從環境變數讀，沒有寫任何 hash。
 
 `claim` 是獨立的 mutation，這是整個機制唯一真正微妙的地方：Convex 的 mutation 是可序列化的交易，所以兩個分頁讀到同一則 `pending` 時只有一個拿到 `claimed: true`。把它塞進執行器的「讀對話→執行」裡就會有一段兩邊都以為指令是自己的空窗，使用者會看到卡片被移兩次——或者兩筆提議要審。
+
+## 進度追蹤與通知（`notifications` ＋ `reports` 表）
+
+看板助理是「有人問才動」的，進度追蹤器（tracker）是反過來的那一半：它被排程叫起來
+（一天兩次巡邏、週一發週報、上班時間每小時掃複查），自己去看板與 GitHub／Jira 上找
+問題，然後**提議修正**並**通知當事人**。做法與紅線在
+`.claude/skills/board-tracker/SKILL.md`。
+
+**它改看板的方式跟人完全一樣。** tracker 帳號拿 `permRead + permEditRequest +
+permTracker`，**沒有 `permWrite`**，所以它呼叫的還是那六個 `board:*` mutation，被
+`convex/board.ts` 既有的分岔轉成 `editRequests` 的一筆提議，由有 `permWrite` 的人在
+鈴鐺裡審核。`convex/board.ts`、`convex/apply.ts`、`convex/editRequests.ts`
+**為它增加的程式碼是零行**——這就是當初把權限做成「後端分岔」而不是「前端兩條路」
+換來的東西。所以 `convex/notifications.ts` 只做看板本來沒有的兩件事：跟人說話，以及
+發布一個檔案。
+
+### `notifications`：一個人現在該看到什麼
+
+| 欄位 | 內容 |
+| --- | --- |
+| `account` | 收件人。發送時會檢查這個帳號存在**而且有 `permRead`**（沒有讀取權的人沒有鈴鐺可以看，待審註冊也不該被通知工作） |
+| `kind` | `progress`（個人進度，關掉＝要求複查）／`report`（週報連結）／`info`（其他，關掉就是關掉） |
+| `text` | 純文字，換行照顯示。UI 不當 markdown 渲染——通知是一小塊面板，不是報告 |
+| `link` | 選填。畫成一個「開啟」連結（新分頁），不內嵌 |
+| `keys` | 選填。這則通知在講哪幾張卡，**一律用 key**（Convex id 換個 deployment 就沒有意義） |
+| `dismissedAt` | 使用者關掉它的時間。有值就不在他的清單裡 |
+| `recheckPending` | 只有 `progress` 被關掉時會設：「這個人說他追上了，去查」 |
+
+索引兩個：`by_account`（一個人的清單）、`by_recheck`（複查佇列，不用掃全表）。
+
+**這張表是活的狀態，不是歷史。** `report` / `info` 被關掉就直接刪掉；`progress` 被
+關掉只以「複查單」的形式留著，tracker 複查完也是刪掉。所以表裡永遠只有「現在畫在螢
+幕上的」加「tracker 還欠一個答案的」，跟 `editRequests` 同一個選擇（沒有 audit
+log——需要留痕的東西在看板上、在提議裡、在週報裡）。
+
+**`progress` 會合併，其他兩種一律新增。** 一個人身上最多一則活的進度通知：再發一則
+就是把原本那一則的內容**原地換掉**（`trackerSend` 回 `merged: true`）。理由是巡邏一天
+跑兩次，而它每次送的是「你現在的完整樣子」——堆疊只會變成同一件事被講三遍。原地換掉
+也會把上一版有、這一版沒有的 `link` / `keys` 清掉（`patch` 給 `undefined` 就是刪欄
+位），所以一則通知不會混到兩次巡邏的內容。**位置不會被頂到最上面**：它是同一則通知被
+刷新，不是新消息。
+
+**關掉「進度」＝要求複查。** 那是一句主張（「我追上了」），所以 `dismiss` 在
+`progress` 上做兩件事：蓋 `dismissedAt`（從使用者清單消失）並設 `recheckPending`
+（進 tracker 的 `trackerPendingRechecks`）。每小時的複查掃描重跑**那一個人**的檢查，
+然後 `trackerResolveRecheck` 收掉那一列，同一個 mutation 順便把結論送出去——追上了就
+一則 `info`「進度已追上」，沒追上就一則新的 `progress` 寫清楚還剩什麼。兩件事在同一個
+交易裡，因為「清掉複查單」和「說明為什麼」中間掉一半，使用者就兩邊都得不到。
+
+被關掉的進度通知**不會**留在使用者清單上等複查結果。按下關閉是「這件事我處理了」，
+複查是 tracker 的事；真的沒追上，下一輪會有一則新的。
+
+### `reports`：一週一筆，週次是幂等的鑰匙
+
+| 欄位 | 內容 |
+| --- | --- |
+| `weekNumber` | 團隊自己的 checkpoint 週次（週日到週六），不是 ISO 週號 |
+| `startDate` / `endDate` | 覆蓋的區間，ISO 日期，兩端都含 |
+| `storageId` | 上傳到 Convex storage 的 HTML 檔 |
+| `title` | 廣播時叫它什麼，預設 `W<n> 週報` |
+
+`by_week` 索引就是那個護欄：**已經有週報的那一週不能再發布**。理由跟
+`board:addNextWeek` 收 `weekNumber` 一樣——週一的 Routine 重跑、或者一次沒收到回應的
+重試，不可以把同一份週報再廣播給全部人一次。發布失敗的訊息就是 tracker 需要的答案
+（「它已經出去了」）。
+
+通知上的 `link` 是**發布時**就解析好的 storage URL（不是每次讀 `mine` 再算一次：那個
+URL 在檔案活著的期間是固定的，每次渲染多打一次 lookup 只是為了拿到同一個字串）。
+代價講清楚：**那個 URL 不需要認證**，拿到連結的人就讀得到週報——跟固定不變的
+`tokenHash` 是同一類取捨，也是 skill 明文要求「週報裡不要有看板上看不到的東西」的
+原因。
+
+### 函式面
+
+| 函式 | 型別 | 需要的權限 | 做什麼 |
+| --- | --- | --- | --- |
+| `notifications:mine` | query | `permRead` | 自己還沒關掉的通知，新的在前（鈴鐺訂閱的就是它） |
+| `notifications:dismiss` | mutation | `permRead` | 關掉自己的一則。`progress` 變成複查單，其他直接刪 |
+| `notifications:trackerSend` | mutation | `permTracker` | 發給一個人（`account` / `kind` / `text` / 選填 `link`、`keys`）；`progress` 會合併 |
+| `notifications:trackerBroadcast` | mutation | `permTracker` | 發給每個有 `permRead` 的帳號（跳過沒有讀取權的人與 tracker 自己） |
+| `notifications:trackerPendingRechecks` | query | `permTracker` | 等著被複查的那些列（帳號、內容、keys、關掉的時間） |
+| `notifications:trackerResolveRecheck` | mutation | `permTracker` | 收掉一筆複查，可以同時送出後續通知 |
+| `notifications:trackerReportUploadUrl` | mutation | `permTracker` | 一次性的上傳網址（週報 HTML 直接進 storage，不經過 mutation 參數） |
+| `notifications:trackerPublishReport` | mutation | `permTracker` | 記一筆 `reports` 並廣播帶連結的 `report` 通知；同一週第二次會被拒絕 |
+
+tracker 那半邊跟助理一樣是**公開函式**（要 `permTracker`），因為它跑在沒有 Convex
+憑證的容器裡：一樣送 `{ account, tokenHash }` 打 `POST /api/query` 與 `/api/mutation`
+（`.claude/skills/board-tracker/scripts/tracker-call.mjs`）。巡邏沒有東西要等，所以
+這裡**沒有** listener——一次性呼叫就夠了。**認證過不等於可信任**：文字非空且有長度上
+限、`link` 必須是 http(s)、`keys` 走 `convex/validation.ts` 的 `cleanKey`、日期是 ISO
+字串，跟匯入一樣嚴。
