@@ -64,6 +64,35 @@ other combination means the account was seeded wrong — stop and say so rather
 than patrolling half-armed. Also make sure `node_modules` exists (`npm
 install` in a fresh container): the scripts need it.
 
+## Bootstrap — sessions anchored on another repo
+
+Tracker sessions normally open **anchored on the team's product repo**
+(`Pisolutions-consultant/pimq`), because that is where the PRs live and the
+GitHub tools only read repos in the session's scope — a session anchored on
+the kanban repo cannot read the team's PRs, which guts the stuck check and
+the review statistics. The kanban repo is then not checked out, so set
+yourself up first; after this, the skill needs nothing else from the prompt:
+
+```bash
+git clone https://github.com/kevinchen-pimq/kanban /tmp/kanban
+cd /tmp/kanban && npm install
+```
+
+Every path in this skill is relative to that checkout. The credential env
+vars come from the session environment's configuration; if they are not set
+and the prompt did not provide them, stop and say so (red line above — never
+go looking for them in files). Default to the **dev** deployment unless the
+prompt names production.
+
+A launch prompt therefore only needs to say four things — everything else is
+this file:
+
+```
+clone https://github.com/kevinchen-pimq/kanban 到 /tmp/kanban（分支 <branch>，沒指定就 main），
+讀 /tmp/kanban/.claude/skills/board-tracker/SKILL.md，執行「<patrol|weekly report|recheck scan>」duty。
+deployment：<dev|production>。憑證在環境變數。
+```
+
 ## How to call
 
 `POST <URL>/api/query` and `POST <URL>/api/mutation`, body
@@ -128,8 +157,8 @@ only the kanban repo itself) is degraded, not failed: list the card as 需檢查
 ／無法讀取 instead of guessing either way, and say which repositories were
 unreadable in the session output — same spirit as the missing-Atlassian rule.
 Week numbers come from `npm run week` — the team's Sunday–Saturday numbering
-is not the ISO week, and the repo is checked out in every fired session, so
-the tool is always there.
+is not the ISO week, and the kanban checkout (see the bootstrap section)
+always has the tool.
 
 ## Duty: patrol (09:00 and 13:30, Mon–Fri)
 
@@ -206,7 +235,9 @@ node .claude/skills/board-tracker/scripts/upload-report.mjs report.html \
 `--week` must be the team week number **of that same Sunday–Saturday window**
 (`npm run week -- <start-date>` confirms it). It is also the idempotency key —
 a wrong number both mislabels the report and blocks the right week's report
-from ever publishing.
+from ever publishing. If publishing is refused because the week already has a
+report, that *is* the answer: report it in the session output and stop — never
+bump the number or otherwise work around the refusal.
 
 Write the HTML to the session's scratch space, never into the repo. Do not put
 anything in the report that is not already visible on the board or in the PRs
@@ -239,12 +270,12 @@ points at this skill. Cron is UTC; these are the Asia/Taipei times converted:
 | weekly report | Mon 08:30 | `30 0 * * 1` |
 | recheck scan | Mon–Fri hourly 08:00–19:00 | `0 0-11 * * 1-5` |
 
-Each Routine's prompt must be standalone (fresh sessions know nothing): which
-duty, which deployment URL, and "read
-`.claude/skills/board-tracker/SKILL.md` before doing anything". The credential
-env vars come from the execution environment's configuration, never from the
-prompt or a file. The Routines also need the Atlassian connector granted so
-the Jira half of a patrol works headless.
+Each Routine fires into an environment anchored on the product repo (so the
+PRs are readable) and its prompt is the four-line template from the bootstrap
+section — fresh sessions know nothing else. The credential env vars come from
+that environment's configuration, never from the prompt or a file. The
+Routines also need the Atlassian connector granted so the Jira half of a
+patrol works headless.
 
 ## Red lines
 
