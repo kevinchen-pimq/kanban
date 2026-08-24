@@ -8,9 +8,11 @@ description: >-
   worth loading this for: the tracker never writes the board directly — its
   account holds `permEditRequest`, so every `board:*` call it makes becomes a
   pending proposal for a human to approve; Jira and GitHub are read-only; stuck
-  means a PR older than 1.5 working days without a merge or with two or more
-  review-request rounds; and personal progress goes out as notifications (one
-  live one per person, merged on update), never as chat messages.
+  means a PR older than 1.5 working days without a merge, or one whose single
+  most-frequent reviewer has submitted two or more reviews; a board `done`
+  decouples the card from Jira (only non-done cards sync); and personal
+  progress goes out as notifications (one live one per person, merged on
+  update), never as chat messages.
 ---
 
 # Being the board tracker
@@ -145,10 +147,14 @@ closed PRs):
    # → {"workingHours": …, "workingDays": …, "stuck": true|false}
    ```
 
-2. **Review rounds**: the PR has accumulated **two or more review-request
-   rounds**. A round is one "review requested" event on the PR — this team
-   reviews with comments, not GitHub change-requests, so count the requests,
-   not the review verdicts.
+2. **Review rounds**: some single reviewer has come back **two or more
+   times**. The round count is the *maximum* number of submitted reviews by
+   any one person who is not the PR's author — kevin submitted 3 reviews and
+   jimmy 1 means 3 rounds. The same person reviewing again is what a rework
+   round looks like; two different people reviewing once each is not. This
+   team reviews with comments rather than GitHub change-requests, so count
+   submitted reviews regardless of their verdict — they are listed by the
+   ordinary PR-reading tools, no timeline events needed.
 
 The PR facts come from the GitHub MCP (`pull_request_read` and friends):
 state, `created_at`, merged or not, and the review-request events. **A PR
@@ -168,9 +174,12 @@ quietly — no notifications, no proposals, no noise.
 1. **Read the board** (`board:get`, no `fromDate`) and note today's week.
 2. **PR health**: for every non-done ticket with `githubPrs`, fetch each open
    PR and apply the stuck rules above. Collect the stuck set.
-3. **Jira sync**: for every ticket whose key looks like a Jira key, read the
-   issue through the Atlassian MCP and compare: Jira resolved but the board
-   light is not `done`; board `done` but Jira still open; assignee changed.
+3. **Jira sync**: a board `done` is a person's sign-off and **decouples the
+   card from Jira** — whatever Jira says about a done card afterwards is by
+   design, never a mismatch, so skip done cards entirely. For every
+   *non-done* ticket whose key looks like a Jira key, read the issue through
+   the Atlassian MCP and compare: Jira further along than the board light
+   (resolved, or a status implying a later light); assignee changed.
    **If the Atlassian MCP is not available in this session** (headless
    Routines sometimes lack claude.ai connectors), skip this step, say so in
    the session output, and carry on — a patrol without Jira is degraded, not
@@ -212,13 +221,18 @@ Sections, in order — one section per feature, keep each one short:
 3. **卡住清單** — every currently-stuck card: key, assignee, PR link, working
    days since the PR was created, review rounds; sorted most-stuck first.
 4. **PR review 統計** — PRs merged last week: working days from creation to
-   merge and review rounds for each, the averages, and the slowest few named.
-   If the PRs' repositories are unreadable (see the degradation rule above),
-   say so in place of the numbers rather than dropping the section silently.
-5. **看板與 Jira 的落差** — mismatches found this morning, each marked 已提議待審
-   when a pending proposal covers it. Proposals from earlier patrols are
-   visible to you: they were made by this same tracker account, and
-   `board:get` overlays your own pending requests.
+   merge and review rounds for each, then **both the median and the mean**
+   (a handful of PRs with one ancient outlier makes a mean alone
+   meaningless), and the slowest few named. Round working days to one
+   decimal — the inputs carry no more precision than that. If the PRs'
+   repositories are unreadable (see the degradation rule above), say so in
+   place of the numbers rather than dropping the section silently.
+5. **看板與 Jira 的落差** — mismatches found this morning, under the same
+   rule as a patrol's Jira sync: done cards are decoupled from Jira and never
+   count, only non-done cards can mismatch. Mark each one 已提議待審 when a
+   pending proposal covers it. Proposals from earlier patrols are visible to
+   you: they were made by this same tracker account, and `board:get` overlays
+   your own pending requests.
 6. **下週預排狀況** — what is already scheduled into the new week's row, and
    who has nothing yet. If the new week's row does not exist yet (creating it
    is a person's affordance on the board, not yours), say 尚未建立 and list
