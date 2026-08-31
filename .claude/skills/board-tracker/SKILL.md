@@ -174,7 +174,18 @@ quietly — no notifications, no proposals, no noise.
 1. **Read the board** (`board:get`, no `fromDate`) and note today's week.
 2. **PR health**: for every non-done ticket with `githubPrs`, fetch each open
    PR and apply the stuck rules above. Collect the stuck set.
-3. **Jira sync**: a board `done` is a person's sign-off and **decouples the
+3. **PR linkage**: people forget to link their PRs. List the product repo's
+   open PRs (and those merged since the last patrol, roughly the last working
+   day) and look for board ticket keys in the branch name and title. A PR
+   that names a *non-done* ticket the board does not carry it on is an
+   unlinked PR: propose `updateTicket` with the ticket's **existing
+   `githubPrs` plus the new URL** — the field replaces the whole list, so
+   never send the new URL alone — and fold a reminder into the author's
+   progress notification (map the author the same way as reviewers: GitHub
+   username matching a board account, otherwise the ticket assignee's
+   notification carries it): link the PR when opening it, so tracking does
+   not depend on the patrol noticing.
+4. **Jira sync**: a board `done` is a person's sign-off and **decouples the
    card from Jira** — whatever Jira says about a done card afterwards is by
    design, never a mismatch, so skip done cards entirely. For every
    *non-done* ticket whose key looks like a Jira key, read the issue through
@@ -184,18 +195,19 @@ quietly — no notifications, no proposals, no noise.
    Routines sometimes lack claude.ai connectors), skip this step, say so in
    the session output, and carry on — a patrol without Jira is degraded, not
    failed.
-4. **Propose fixes** for every mismatch that has a clear right answer (usually
+5. **Propose fixes** for every mismatch that has a clear right answer (usually
    `updateTicket` with the status Jira implies). Each proposal needs a state
    you could narrate in one sentence; if the right fix is ambiguous, put it in
    the notification text instead of guessing a proposal. Proposals live in
    the approval bell — **never restate them in a notification**; the
    notification is for what a person must do, not for what you did.
-5. **Personal progress notifications** (`kind: "progress"`) to each person who
+6. **Personal progress notifications** (`kind: "progress"`) to each person who
    is behind — meaning they own a stuck PR, they have non-done cards sitting
-   in a week that has already ended, or they own a card with no Jira ticket
-   behind it (a `LOCAL-*` key — every board card should be tracked in Jira,
-   so ask them to open one). One notification per person carrying their whole
-   current picture; the merge semantics make re-sending safe.
+   in a week that has already ended, they opened a PR without linking it to
+   its card (step 3), or they own a card with no Jira ticket behind it (a
+   `LOCAL-*` key — every board card should be tracked in Jira, so ask them to
+   open one). One notification per person carrying their whole current
+   picture; the merge semantics make re-sending safe.
 
    **Write a push, not a status readout.** Every line ends in the next
    action and who it is waiting on. A stuck PR is always waiting on
@@ -209,7 +221,7 @@ quietly — no notifications, no proposals, no noise.
    Map ticket `assignee` names to accounts through `config.assigneeAccounts`;
    a name with no mapping gets no notification — mention it in the session
    output instead.
-6. **Do not repeat yourself.** A person already carrying a live progress
+7. **Do not repeat yourself.** A person already carrying a live progress
    notification gets it refreshed (that is what `trackerSend` does), not a
    second one. A mismatch already covered by a pending edit request — yours or
    anyone's, visible in `board:get`'s overlay for your own — must not be
