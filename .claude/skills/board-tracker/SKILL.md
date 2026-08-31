@@ -174,13 +174,24 @@ quietly — no notifications, no proposals, no noise.
 1. **Read the board** (`board:get`, no `fromDate`) and note today's week.
 2. **PR health**: for every non-done ticket with `githubPrs`, fetch each open
    PR and apply the stuck rules above. Collect the stuck set.
-3. **PR linkage**: people forget to link their PRs. List the product repo's
-   open PRs (and those merged since the last patrol, roughly the last working
-   day) and look for board ticket keys in the branch name and title. A PR
-   that names a *non-done* ticket the board does not carry it on is an
-   unlinked PR: propose `updateTicket` with the ticket's **existing
-   `githubPrs` plus the new URL** — the field replaces the whole list, so
-   never send the new URL alone — and fold a reminder into the author's
+3. **PR linkage**: people forget to link their PRs, and the ones who forget
+   the link usually forgot the key too — so matching keys is not enough.
+   List the product repo's open PRs (and those merged since the last patrol,
+   roughly the last working day) and, for every PR the board does not carry
+   on any card, work out which *non-done* card it belongs to:
+
+   - a board ticket key in the branch name or title is a certain match;
+   - otherwise **read the PR the way a person would** — title, description,
+     what the changes touch — and compare against the card titles. You are
+     the judge of "this PR is that card's work"; confirm by reading, never
+     by string similarity alone.
+
+   A confirmed match gets a proposal: `updateTicket` with the ticket's
+   **existing `githubPrs` plus the new URL** — the field replaces the whole
+   list, so never send the new URL alone. A plausible but unconfirmed match
+   is a question, not a proposal: put 「#123 看起來是這張卡的，請確認並關聯」
+   in the notification instead of guessing a linkage that a reviewer would
+   then rubber-stamp. Either way, fold the reminder into the author's
    progress notification (map the author the same way as reviewers: GitHub
    username matching a board account, otherwise the ticket assignee's
    notification carries it): link the PR when opening it, so tracking does
