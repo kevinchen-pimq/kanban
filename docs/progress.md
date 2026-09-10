@@ -108,6 +108,18 @@ _更新於 2026-08-23。_
   `.claude/skills/board-tracker/scripts/workdays.mjs`（排除台北的週六日，附
   fixtures 自測），tracker 的做法與紅線在
   `.claude/skills/board-tracker/SKILL.md`。
+- **個人看板（`views` 表 ＋ 左側欄）**：header 底下多一條 224px 的側欄，列出所有人
+  存起來的看板（自己的在最上面，其他人依帳號分組），選一列就是把 Epic 篩選換成它
+  那組 code——**沒有第二種顯示模式**，看板還是同一個看板，只是欄變少。固定的第一列
+  「全部 Epic」代表「沒有選看板」，也是手動改 Epic 篩選、按重置、或看板被刪掉之後
+  落回的地方；選到的看板存在 `kanban.filters.v1`，重開分頁還亮著同一列，側欄開合則
+  是另一個 key（版面不是篩選）。新增／編輯／刪除走 `ViewDialog`（名稱 ＋ Epic 勾選，
+  刪除問兩次）。後端是 `views:list` / `create` / `update` / `remove` 四個函式，
+  **四個都只要 `permRead`，而且不走編輯提議**——view 是偏好不是看板內容，沒有東西
+  需要審核；擋的是擁有權（大家互相看得到，只有本人能改），而且擁有權被拒絕丟的是
+  一般中文錯誤、不是 `AUTH_DENIED`，所以錯誤停在 dialog 上不會把人踢回登入頁。
+  存的是 epic `code` 不是 Convex id（重新匯入照樣對得上），寫入時每個 code 都會驗
+  它真的在 `epics` 表上。`auth:deleteUser` 順手把那個人的看板也刪掉。
 - 匯入管線：payload 驗證、冪等 upsert、`pruneEpics` 全量同步
 - 從 Jira 匯入的流程整理成 skill（`.claude/skills/jira-board-import/`），
   當看板助理的流程整理成另一個 skill（`.claude/skills/board-assistant/`），

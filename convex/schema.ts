@@ -425,6 +425,36 @@ export default defineSchema({
     // The duplicate check, and how a report for a given week is found again.
     .index("by_week", ["weekNumber"]),
 
+  // 個人看板: a named set of epics somebody saved as their own way of looking
+  // at the board — the left sidebar's rows.
+  //
+  // A view is **a preference, not board content**. It carries no card data and
+  // changes nothing anyone else sees: selecting one only sets the epic filter,
+  // which is why writing one asks for `permRead` and never goes through
+  // `editRequests` (see `convex/views.ts` and `docs/data-model.md`).
+  //
+  // Everybody with `permRead` can look at everybody's views — the sidebar is
+  // also "what is Ping tracking this month" — but only the owner may change or
+  // delete their own.
+  views: defineTable({
+    // The account that owns it, normalised by `cleanAccount` exactly like
+    // `notifications.account` and `messages.account`, so the three tables key
+    // people the same way.
+    owner: v.string(),
+    // What the sidebar row says. Trimmed, non-empty, unique per owner
+    // (case-insensitively): two rows called the same thing are unpickable.
+    name: v.string(),
+    // Epic `code`s, not ids — the same choice `src/lib/filters.ts` makes for the
+    // remembered filter: a re-imported epic gets a new document, and the view
+    // should still mean the same columns. Codes the board no longer has are
+    // simply not matched, so a stale one hides nothing.
+    epicCodes: v.array(v.string()),
+  })
+    // One person's views, for the sidebar's own group and the duplicate-name
+    // check. The table is small enough that everybody's are read with one
+    // `take`, so there is no second index.
+    .index("by_owner", ["owner"]),
+
   // Board-wide settings, as a single document (the first row wins).
   //
   // These are deployment settings rather than board data: the Jira site the

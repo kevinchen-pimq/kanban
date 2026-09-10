@@ -17,6 +17,7 @@ import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as validation from "../validation.js";
+import type * as views from "../views.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   notifications: typeof notifications;
   staticHosting: typeof staticHosting;
   validation: typeof validation;
+  views: typeof views;
 }>;
 
 /**
