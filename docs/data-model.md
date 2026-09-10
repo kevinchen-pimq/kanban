@@ -1,6 +1,6 @@
 # 資料模型
 
-`convex/schema.ts` 九張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關，一張是聊天，兩張是進度追蹤：
+`convex/schema.ts` 十張表——三張是看板資料，一張設定，兩張跟帳號與編輯提議有關，一張是聊天，兩張是進度追蹤，一張是個人看板：
 
 - **`epics`** — X 軸的欄。`code`（如 `DEMO-BOARD`）、`name`、`accent` 顏色鍵、`order` 決定左右順序。
 - **`checkpoints`** — Y 軸的列。`kind` 是 `week` 或 `backlog`；週別存 `weekNumber` 與 `startDate`/`endDate`（ISO 日期字串）。**列的順序由日期推導**，不看 payload 給的 `order`——週次有真實日期，從日期排就不可能因為匯入時 `order` 給錯而排亂（這個錯踩過一次）。backlog 永遠在最後。
@@ -11,6 +11,7 @@
 - **`messages`** — 看板助理的聊天訊息，一個帳號一條對話。助理的指令也是一則訊息，帶著它的執行狀態，見「看板助理的對話」。
 - **`notifications`** — 進度追蹤器要跟某個人說的話（header 的第二個鈴鐺）。**活的狀態，不是歷史**，見「進度追蹤與通知」。
 - **`reports`** — 已經發布的週報，一週一筆，HTML 檔在 Convex storage，見同一節。
+- **`views`** — 個人看板：某個人存起來的一組 Epic，也就是左側欄的一列。**是偏好，不是看板內容**，見「個人看板」。
 
 ## 狀態燈號
 
@@ -103,7 +104,7 @@ requirePermission(ctx, auth, "permApproveRegister")   // 或 "permAgent" / "perm
 | `auth:approve` | mutation | `permApproveRegister` | **只設 `permRead=true`**，不會給其他權限 |
 | `auth:dismiss` | mutation | `permApproveRegister` | 刪掉那筆註冊，名字就釋放出來。已經過審的帳號拒絕刪（誤點鈴鐺不該砍掉在用的帳號） |
 | `auth:seedUser` | **internal** | — | 建立／覆寫帳號，六個權限都自己指定（`permEditRequest`、`permAgent`、`permTracker` 選填，不給就是 false）。第一個管理員從這裡進來 |
-| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議、他的聊天訊息與他的通知（對話與通知都是用帳號名稱定位的，留著會被同名新帳號讀到） |
+| `auth:deleteUser` | **internal** | — | 刪帳號，也就是撤銷的唯一途徑；順手刪掉那個人還沒被審核的編輯提議、他的聊天訊息、他的通知與他的個人看板（這幾張表都是用帳號名稱定位的，留著會被同名新帳號讀到，個人看板還會繼續掛在左側欄上）。回傳值裡有各自刪了幾筆 |
 | `auth:listUsers` | **internal** | — | 列出帳號與權限（不回 hash） |
 
 `permWrite`、`permEditRequest`、`permApproveRegister`、`permAgent` 與 `permTracker` **只能從終端機給**（`auth:approve` 只會給 `permRead`），瀏覽器沒有任何路徑能把自己或別人升權：
@@ -149,7 +150,7 @@ npx convex run auth:seedUser ... --prod   # 對 production
 | `deleteTicket` | 刪掉一張卡 | 卡片必須存在（UI 會要求二次確認） |
 | `addNextWeek` | 在最新週次後面加一列（預排下週） | 只收「哪一週」，日期由伺服器推導；必須剛好是最新週次 +1；該週已存在就直接回傳（見下一小節） |
 
-整個公開面就這些：`board:get`（要 `permRead`）、上面六個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`notifications:*` 的八個函式（見「進度追蹤與通知」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
+整個公開面就這些：`board:get`（要 `permRead`）、上面六個 mutation（要 `permWrite` 或 `permEditRequest`）、`editRequests:*` 的五個函式（見下一節）、`messages:*` 的十一個函式（見「看板助理的對話」）、`notifications:*` 的八個函式（見「進度追蹤與通知」）、`views:*` 的四個函式（見「個人看板」）、`auth:*` 的六個函式，以及唯一不收憑證的 `staticHosting:getCurrentDeployment`（只有部署資訊，前端用它判斷有沒有新版本，登入頁也要能提示，見 architecture.md）。匯入與設定（`convex/data.ts` 的 `importBoard` / `setConfig` / `removeEpics` …）與帳號管理（`auth:seedUser` / `deleteUser` / `listUsers`）**維持 internal**，瀏覽器叫不動。
 
 **認證過不等於可信任。** `requireWrite` 只回答「這個人有沒有編輯權」，不回答「這份資料合不合理」，所以每個 handler 的欄位驗證跟匯入一樣嚴，共用的檢查住在 `convex/validation.ts`。
 
@@ -422,3 +423,42 @@ tracker 那半邊跟助理一樣是**公開函式**（要 `permTracker`），因
 這裡**沒有** listener——一次性呼叫就夠了。**認證過不等於可信任**：文字非空且有長度上
 限、`link` 必須是 http(s)、`keys` 走 `convex/validation.ts` 的 `cleanKey`、日期是 ISO
 字串，跟匯入一樣嚴。
+
+## 個人看板（`views` 表）
+
+頂欄的 Epic 篩選一次只服務「現在這一眼」，關掉分頁就忘了。`views` 把「我追的那幾個
+Epic」存下來，變成左側欄的一列：**一個名字 ＋ 一組 Epic `code`**，選它就是把 Epic
+篩選換成那組 code，其他什麼都不動。
+
+| 欄位 | 內容 |
+| --- | --- |
+| `owner` | 帳號名稱（跟 `notifications.account` / `messages.account` 一樣，經 `cleanAccount` 正規化）。有 `by_owner` 索引 |
+| `name` | 顯示在側欄那一列上的名字。去掉前後空白、不能是空的、最長 40 字（`convex/validation.ts` 的 `cleanViewName`）；同一個人底下不分大小寫不可重複——兩列長一樣沒辦法選 |
+| `epicCodes` | Epic 的 **`code`**，不是 `_id`。跟 `src/lib/filters.ts` 記篩選時同一個選擇：重新匯入會換掉 epic 文件，但 code 活下來 |
+
+### 為什麼寫入只要 `permRead`，而且不走編輯提議
+
+看板的六個 `board:*` mutation 會依 `permWrite` / `permEditRequest` 分岔（見「編輯提議」），
+`views:*` **不在那條路上**，因為個人看板不是看板內容：它沒有任何卡片資料，寫它也不會
+改到任何人看到的看板，只是改自己怎麼看。所以沒有東西需要審核——讓一個唯讀的人為了存
+自己的追蹤清單去排隊等核准，是純粹的儀式。
+
+擋的是**擁有權**：`permRead` 的人看得到所有人的看板（側欄同時也是「大家在追什麼」），
+但只有本人能改、能刪自己的。擁有權被拒絕時丟的是**一般的中文錯誤，不是 `AUTH_DENIED`**
+——憑證是好的，前端該把訊息顯示出來，而不是丟掉 session 跳回登入頁。
+
+驗證跟其他公開寫入一樣嚴：Epic 至少一個、最多 50 個、不可重複，而且**每個 code 都要真的
+在 `epics` 表上**（擋掉打錯字進表）。這不是「codes 永遠有效」的保證——之後的匯入可以拿掉
+某個 epic，那時看板就少配到一欄，跟 `src/lib/filters.ts` 丟掉不存在的篩選值是同一個取捨。
+
+### 函式面
+
+| 函式 | 型別 | 需要的權限 | 做什麼 |
+| --- | --- | --- | --- |
+| `views:list` | query | `permRead` | 所有人的看板，**自己的排在最上面**，接著依帳號、名字排；每筆帶 `mine`（前端用它決定要不要長鉛筆）。排序放在後端，因為順序本身就是答案 |
+| `views:create` | mutation | `permRead` | 建一個自己的看板（`owner` 一律是呼叫者，沒有第二條路），回傳新的 `_id` |
+| `views:update` | mutation | `permRead` ＋ 擁有權 | 名字與 Epic **一起換掉**（dialog 本來就一起編輯，分開只是多開一條讓兩者不一致的路） |
+| `views:remove` | mutation | `permRead` ＋ 擁有權 | 刪掉自己的一個。沒有別的東西指向 view，所以沒有東西要清；側欄少一列，正在看它的人退回全部 Epic |
+
+前端怎麼用（側欄、選取語意、存在 localStorage 的 `viewId`）見 `docs/architecture.md`
+的「個人看板」。

@@ -25,6 +25,8 @@ convex/
                      trackerResolveRecheck / trackerReportUploadUrl /
                      trackerPublishReport，要 permTracker）。tracker 改看板走的是
                      一般的 board:* mutation，所以這裡沒有任何寫看板的程式碼
+  views.ts           個人看板（左側欄）：list / create / update / remove。寫入只要
+                     permRead ＋ 擁有權——view 是偏好不是看板內容，所以不走編輯提議
   auth.ts            登入與權限的唯一關口：requireRead / requireWrite /
                      requireEdit / requirePermission、login / register /
                      pendingUsers / approve / dismiss，以及 internal 的
@@ -44,7 +46,8 @@ src/
   lib/jira.ts        ticket key + config 的 base URL → Jira 網址（沒設定就回 null）
   lib/assignee.ts    負責人頭像的縮寫與顏色（config 指定優先，其次姓名 hash）
   lib/scroll.ts      捲到本週那一列（開場自動捲動與按鈕共用）
-  lib/filters.ts     篩選選擇的 localStorage 存取（版本化 key、載入時驗證）
+  lib/filters.ts     篩選選擇與選到的個人看板的 localStorage 存取（版本化 key、
+                     載入時驗證），以及側欄開合的狀態
   lib/dnd.ts         拖曳的資料型別、暫存區 id、碰撞判定、drop 目標解析
   lib/assistant.ts   助理指令的型別、key／epic code → Convex id 的解析、
                      指令摘要與未讀時間的 localStorage 存取
@@ -61,6 +64,8 @@ src/
                      BoardConfigProvider — 看板設定的 context（來自 board:get）
                      DraggableTicket / StagingTray — 拖曳與暫存區
                      TicketDialog — 新增／編輯／刪除卡片的表單
+                     ViewSidebar — 左側欄：所有人的個人看板，自己的在最上面
+                     ViewDialog — 新增／編輯／刪除個人看板的表單
                      BoardActionsProvider — 開表單與切換狀態的 context
                      BoardAssistant — 右下角的聊天泡泡與對話視窗（含執行器）
                      UpdateNotice — 有新版本時的重新載入提示
@@ -202,7 +207,7 @@ Lazy loading 讓週次軸往**過去**長，`addNextWeek` 讓它往**未來**長
 
 ## 版面
 
-Header 固定 105px，分兩層：標題列與工具列（搜尋、狀態多選、負責人、重置）。
+Header 固定 105px 且**跨滿整個寬度**，分兩層：標題列與工具列（搜尋、狀態多選、負責人、重置）。它底下才是一列 flex：左邊是個人看板的側欄（224px、`shrink-0`、自己捲動，可以收起來），右邊是 `<main>` 裡的矩陣。側欄放在 header 底下而不是整頁最左邊，是因為工具列的篩選對整個看板生效，包含側欄選出來的那組 Epic——讓它壓在側欄上面會讀成「這排篩選只管右邊」。
 
 Y 軸的週欄位是 48px 寬的窄邊欄，標籤以 `writing-mode: vertical-rl` 轉 90 度顯示，讓週次資訊只佔垂直空間、把水平空間全部留給卡片。中文標籤必須同時設 `text-orientation: sideways`，否則預設會維持直立字形，再套 `rotate-180` 就會上下顛倒。
 
@@ -214,13 +219,25 @@ Epic 篩選和另外兩個不太一樣：**epic 是欄，所以篩選是把整�
 
 Epic 與負責人的選項都是從當下看板資料推導的，不是寫死的名單——選單裡不會出現沒有票的人，也不會出現看板上沒有的 epic。沒有負責人的票由「未指派」這個選項涵蓋（內部以 `null` 表示，不是佔位字串）。右側的計數在有篩選時顯示 `已顯示 / 總數`。
 
+## 個人看板：左側欄與存起來的 Epic 選擇
+
+側欄的一列是一個存起來的 Epic 組合（`views` 表，見 data-model.md）。**選一列做的事只有一件：把 Epic 篩選換成它那組 code。** 沒有第二種顯示模式、沒有隱藏的狀態——看板還是同一個看板，只是欄變少了，右上角的計數與其他兩個篩選照常運作。
+
+- **「全部 Epic」是固定的第一列，代表「沒有選看板」。** 手動去動 Epic 下拉、或按重置篩選，也都落回這裡：選取被取消，但**已經套用的欄位不會被還原**——那些欄是使用者剛剛親手挑的。反過來，選了一列之後手改幾個 Epic，**不會回寫**那個看板；要改就進 dialog 改（YAGNI：預設把手邊的調整存成永久設定，比忘記存更難救）。
+- **看板內容變了會即時重套。** `views:list` 是自己的 `useQuery`，別人（或自己在另一個分頁）改了正在看的那個看板，欄位跟著變。`BoardApp` 用 `viewId:codes` 的簽章記住「這組已經套過了」，所以只有**看板真的變了**才重套一次——否則會跟既有「丟掉看板上沒有的 epic」那個效果互相打架，來回震盪。
+- **看板不見了就退回全部 Epic**，但只取消選取、不清掉欄位（同上：那是讀者現在看的東西）。**自己在 dialog 裡按刪除**則兩者都清——那是他自己要求的。
+- **鉛筆只長在自己的列上**，因為 `views:update` 本來就會拒絕別人的看板；在別人的列上放一個必定失敗的按鈕沒有意義。別人的看板**看得到**是刻意的：側欄同時是「大家在追什麼」。
+- **側欄可以收起來**，開關是標題左邊的 `PanelLeft`，狀態記在 `kanban.sidebar.v1`。窄螢幕上收起來就是整個 header 底下只剩矩陣。
+
+`ViewDialog` 沿用 `TicketDialog` 的形狀：名稱一格、Epic 勾選清單（標籤跟 Epic 篩選一樣是 `CODE · 名稱`）、全選／清除、刪除要問兩次、後端丟回來的中文錯誤就地顯示在表單裡。錯誤刻意不是 `AUTH_DENIED`（見 data-model.md），所以名字重複、Epic 不存在這類情況只會停在 dialog 上，不會把人踢回登入頁。
+
 ## 篩選會記住，搜尋不會
 
-三個篩選的選擇存在 `localStorage` 的 `kanban.filters.v1`（`src/lib/filters.ts`）：改變時寫入，開頁時讀一次。只盯著一個 epic 工作的人每天早上不必重新勾三個選單。
+三個篩選的選擇——以及**選到的是哪一個個人看板**——存在 `localStorage` 的 `kanban.filters.v1`（`src/lib/filters.ts`）：改變時寫入，開頁時讀一次。只盯著一個 epic 工作的人每天早上不必重新勾三個選單。側欄的開合是**另一個 key**（`kanban.sidebar.v1`）：它是版面不是篩選，篩選那包壞掉不該順便把側欄收起來。
 
 **搜尋字串刻意不存。** 打在搜尋框裡的是「現在要找哪張卡」的問題，不是看板的觀看方式；隔天打開卻只剩兩張卡、而原因藏在一個沒人會注意的輸入框裡，是很糟的體驗。篩選會在工具列上表明自己的存在，過期的搜尋不會。
 
-存的是 **epic `code` 與負責人姓名**，不是 Convex id——重新匯入讓 epic 換了一份文件，篩選依然對得上。載入後會拿當下的看板資料驗證一次：看板上已經沒有的 epic 或人會被安靜地丟掉（連帶從 storage 移除），不會變成「什麼都篩不出來」的幽靈條件。存成「什麼都沒勾」就會還原成「什麼都沒勾」，也就是顯示全部。讀不到、壞掉、版本不對的內容一律當作沒有篩選——壞掉的偏好不該讓看板打不開。
+`viewId` 是唯一存 Convex id 的一項——view 就是那份文件，沒有名字可以退而求其次；看板已經不在了就退回全部 Epic。存的是 **epic `code` 與負責人姓名**，不是 Convex id——重新匯入讓 epic 換了一份文件，篩選依然對得上。載入後會拿當下的看板資料驗證一次：看板上已經沒有的 epic 或人會被安靜地丟掉（連帶從 storage 移除），不會變成「什麼都篩不出來」的幽靈條件。存成「什麼都沒勾」就會還原成「什麼都沒勾」，也就是顯示全部。讀不到、壞掉、版本不對的內容一律當作沒有篩選——壞掉的偏好不該讓看板打不開。
 
 ## 負責人顏色與 Jira 連結
 

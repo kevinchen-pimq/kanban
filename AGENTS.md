@@ -12,6 +12,8 @@ TypeScript + Vite + Tailwind v4 + shadcn/ui，後端與靜態託管都在 Convex
 讀到訊息會即時回寫「已讀」。header 上還有第二個鈴鐺：一個被排程叫起來的
 進度追蹤器（tracker，要 `permTracker`）巡邏看板、發個人進度通知與週報，它拿的是
 `permEditRequest` 而不是 `permWrite`，所以它要改看板一律變成待審提議。
+左側欄是個人看板（`views`）：每個人把自己要追的那幾個 Epic 存成一列，選一列
+就是把 Epic 篩選換成那組 Epic；大家的看板互相看得到，但只有本人能改。
 
 ## 常用指令
 
@@ -64,6 +66,7 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
 | 開帳號、給／收權限、看登入怎麼運作 | `docs/data-model.md` 的「登入與權限」 |
 | 動編輯提議（提議、合併、疊加、審核） | `docs/data-model.md` 的「編輯提議」＋ `docs/architecture.md` 同名章節 |
 | 動預排下週（新增週次列的 affordance 與推導） | `docs/data-model.md` 與 `docs/architecture.md` 的「預排下週」 |
+| 動個人看板（左側欄、`views` 表） | `docs/data-model.md` 的「個人看板」＋ `docs/architecture.md` 的「個人看板」 |
 | 確認做到哪、還缺什麼 | `docs/progress.md` |
 | 把 Jira epic 上板、改匯入流程 | `.claude/skills/jira-board-import/SKILL.md`（用 skill，別自己重推流程） |
 | 當看板助理、回聊天訊息、用指令改看板 | `.claude/skills/board-assistant/SKILL.md`（用 skill；憑證從環境變數來、等訊息用 `scripts/listen.mjs`） |
@@ -107,7 +110,8 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   `createTicket` / `updateTicket` / `deleteTicket` / `addNextWeek`）要 `permWrite`
   或 `permEditRequest`，助理那半邊的訊息函式（`messages:agent*`）要 `permAgent`，
   追蹤器那半邊的通知函式（`notifications:tracker*`）要 `permTracker`（使用者那半邊的
-  `notifications:mine` / `dismiss` 要 `permRead`）；
+  `notifications:mine` / `dismiss` 要 `permRead`），個人看板（`views:*`）四個函式
+  都要 `permRead`，改／刪再多一道擁有權檢查；
   唯一不收憑證的
   是 `staticHosting:getCurrentDeployment`（只有部署資訊，登入頁也要能提示更新）。
   **認證過不等於可信任**，欄位驗證照樣要跟匯入一樣嚴（標題非空、ISO 日期、PR
@@ -125,6 +129,13 @@ npx convex deployment select laudable-buffalo-595   # 指回團隊 dev deploymen
   **唯一的例外是 `addNextWeek`**（預排下週）：週次列是日期推導的結構而不是內容，
   所以 `permEditRequest` 的人也是直接建立，不轉成提議（理由與幂等設計見
   `docs/data-model.md` 的「預排下週」）。要再開這種例外前先把理由寫進文件。
+- **個人看板（`views:*`）寫入只要 `permRead`，不走編輯提議。** view 是**偏好，不是
+  看板內容**：它沒有卡片資料，寫它不會改到任何人看到的看板，只改自己怎麼看，所以
+  沒有東西需要審核，也不要為它套上 `board:*` 那個 `permWrite` / `permEditRequest`
+  分岔。擋的是**擁有權**——所有人都看得到彼此的看板（側欄同時是「大家在追什麼」），
+  但只有本人能改、能刪自己的。擁有權被拒絕時丟**一般的中文錯誤，不是 `AUTH_DENIED`**：
+  憑證是好的，前端該把訊息顯示在 dialog 上，不是丟掉 session 跳回登入頁。要再開這種
+  「不進提議」的公開寫入前，先把理由寫進 `docs/data-model.md`。
 - **看板助理只碰訊息，永遠不直接寫看板。** 助理帳號拿 `permRead + permAgent`，
   能叫的只有 `messages:agent*` 與 `board:get`；要改看板就用 `agentCommand` 下一條
   指令（卡片一律用 **key** 指涉），由使用者的瀏覽器（`useCommandExecutor`）拿使用者
