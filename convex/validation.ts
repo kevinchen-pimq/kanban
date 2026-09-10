@@ -7,6 +7,10 @@ import { v } from "convex/values";
  * Both write the same table, so both have to hold the same line: a card typed
  * into the board by hand cannot be sloppier than one that came from Jira, or
  * the board slowly fills with values the importer would have refused.
+ *
+ * A couple of checks here belong to a single caller (`cleanViewName`); they live
+ * with the rest because "what shapes may a public mutation store" is one
+ * question, and answering it in one file is what keeps the answers alike.
  */
 
 /** Which row a ticket belongs to: a week number, or the backlog pool. */
@@ -77,6 +81,25 @@ export function cleanHttpUrl(value: string, field = "URL"): string {
 /** Pull request badges are links, so each one goes through `cleanHttpUrl`. */
 export function cleanPrUrls(urls: readonly string[]): string[] {
   return urls.map((raw) => cleanHttpUrl(raw, "Pull request URL"));
+}
+
+/** Longest saved-view name the sidebar can show on one row. */
+const MAX_VIEW_NAME = 40;
+
+/**
+ * The name on a personal board (`views`), as the sidebar will render it.
+ *
+ * Short on purpose: the row is 224px wide and a name that has to be truncated
+ * stops being a label. Empty is refused for the same reason a card needs a
+ * title — an unnamed row is unpickable.
+ */
+export function cleanViewName(value: string): string {
+  const name = value.trim();
+  if (!name) throw new Error("看板名稱不能是空的。");
+  if (name.length > MAX_VIEW_NAME) {
+    throw new Error(`看板名稱超過 ${MAX_VIEW_NAME} 個字元。`);
+  }
+  return name;
 }
 
 /** Optional single-line text such as a tag or an assignee name. */

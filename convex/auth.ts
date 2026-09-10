@@ -405,9 +405,10 @@ export const seedUser = internalMutation({
  * of what happened, so an account that no longer exists should not leave
  * something for a reviewer to approve in its name.
  *
- * So does their assistant conversation, and so do their notifications. Both are
- * addressed by account *name*, so leaving them behind would hand them to whoever
- * registers that name next.
+ * So do their assistant conversation, their notifications and their saved views
+ * (個人看板). All three are addressed by account *name*, so leaving them behind
+ * would hand them to whoever registers that name next — and a view nobody owns
+ * would sit in everybody's sidebar with no way to remove it.
  */
 export const deleteUser = internalMutation({
   args: { account: v.string() },
@@ -416,6 +417,7 @@ export const deleteUser = internalMutation({
     editRequestsDeleted: v.number(),
     messagesDeleted: v.number(),
     notificationsDeleted: v.number(),
+    viewsDeleted: v.number(),
   }),
   handler: async (ctx, args) => {
     const account = cleanAccount(args.account);
@@ -426,6 +428,7 @@ export const deleteUser = internalMutation({
         editRequestsDeleted: 0,
         messagesDeleted: 0,
         notificationsDeleted: 0,
+        viewsDeleted: 0,
       };
     }
 
@@ -447,12 +450,19 @@ export const deleteUser = internalMutation({
       .collect();
     for (const notification of notifications) await ctx.db.delete(notification._id);
 
+    const views = await ctx.db
+      .query("views")
+      .withIndex("by_owner", (q) => q.eq("owner", account))
+      .collect();
+    for (const view of views) await ctx.db.delete(view._id);
+
     await ctx.db.delete(user._id);
     return {
       deleted: true,
       editRequestsDeleted: requests.length,
       messagesDeleted: messages.length,
       notificationsDeleted: notifications.length,
+      viewsDeleted: views.length,
     };
   },
 });
