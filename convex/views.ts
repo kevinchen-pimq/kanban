@@ -118,7 +118,7 @@ async function requireOwn(
   const view = await ctx.db.get(viewId);
   if (!view) throw new Error("這個看板已經不存在了。");
   if (view.owner !== account) {
-    throw new Error(`「${view.name}」是 ${view.owner} 的看板，只有他能修改。`);
+    throw new Error(`「${view.name}」是 ${view.owner} 的看板，只有本人能修改。`);
   }
   return view;
 }
