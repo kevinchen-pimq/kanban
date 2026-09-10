@@ -1,4 +1,4 @@
-import { LayoutGrid, RotateCcw, Search } from "lucide-react";
+import { LayoutGrid, PanelLeft, RotateCcw, Search } from "lucide-react";
 
 import { AccountBar } from "@/components/AccountBar";
 import {
@@ -29,6 +29,8 @@ const STATUS_OPTIONS: FilterOption<TicketStatus>[] = STATUS_ORDER.map(
 );
 
 export function BoardHeader({
+  sidebarOpen,
+  onToggleSidebar,
   search,
   onSearchChange,
   epicFilter,
@@ -43,6 +45,9 @@ export function BoardHeader({
   visibleCount,
   totalCount,
 }: {
+  /** Whether the 個人看板 sidebar below the header is showing. */
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
   search: string;
   onSearchChange: (value: string) => void;
   epicFilter: EpicFilter;
@@ -63,6 +68,20 @@ export function BoardHeader({
     <header className="h-[105px] shrink-0 border-b border-slate-200 bg-white">
       <div className={`${TIER} justify-between`}>
         <div className="flex min-w-0 items-center gap-3">
+          {/* Left of the title, over the sidebar it collapses. */}
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            aria-label={sidebarOpen ? "收起看板列表" : "展開看板列表"}
+            aria-expanded={sidebarOpen}
+            title={sidebarOpen ? "收起看板列表" : "展開看板列表"}
+            className={`rounded-md p-1.5 hover:bg-slate-100 ${
+              sidebarOpen ? "text-indigo-600" : "text-slate-400"
+            }`}
+          >
+            <PanelLeft className="size-[18px]" aria-hidden />
+          </button>
+
           <div className="rounded-lg bg-indigo-600 p-1.5 text-white shadow-sm">
             <LayoutGrid className="size-[18px]" aria-hidden />
           </div>

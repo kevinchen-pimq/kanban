@@ -42,6 +42,8 @@ import {
   type TicketTarget,
 } from "@/components/TicketDialog";
 import { UpdateNotice } from "@/components/UpdateNotice";
+import { ViewDialog, type ViewTarget } from "@/components/ViewDialog";
+import { ViewSidebar } from "@/components/ViewSidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   matchesSearch,
@@ -50,7 +52,12 @@ import {
   type TicketStatus,
 } from "@/lib/board";
 import { todayIso, weeksBefore } from "@/lib/dates";
-import { loadFilters, saveFilters } from "@/lib/filters";
+import {
+  loadFilters,
+  loadSidebarOpen,
+  saveFilters,
+  saveSidebarOpen,
+} from "@/lib/filters";
 import {
   boardCollision,
   reorderedCell,
@@ -234,13 +241,87 @@ export function BoardApp() {
     () => new Set(stored.assignees),
   );
 
+  // The sidebar's saved epic sets (`convex/views.ts`). Its own subscription
+  // rather than part of `board:get`: a different lifetime (it changes when
+  // somebody saves a view, not when the board window moves) and a tiny payload.
+  const views = useQuery(api.views.list, { auth });
+  const createView = useMutation(api.views.create);
+  const updateView = useMutation(api.views.update);
+  const removeView = useMutation(api.views.remove);
+
+  const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
+  useEffect(() => saveSidebarOpen(sidebarOpen), [sidebarOpen]);
+
+  // Which view the sidebar is highlighting. A view is a *preset* for the epic
+  // filter, so this is a second piece of state rather than something derived
+  // from the filter: two views can name the same epics, and a hand-edited
+  // filter that happens to match one is still not "in" it.
+  const [selectedViewId, setSelectedViewId] = useState<Id<"views"> | null>(
+    () => (stored.viewId as Id<"views"> | null) ?? null,
+  );
+  const [editingView, setEditingView] = useState<ViewTarget | null>(null);
+
   useEffect(() => {
     saveFilters({
       epics: [...epicFilter],
       statuses: [...statusFilter],
       assignees: [...assigneeFilter],
+      viewId: selectedViewId,
     });
-  }, [epicFilter, statusFilter, assigneeFilter]);
+  }, [epicFilter, statusFilter, assigneeFilter, selectedViewId]);
+
+  /** 「全部 Epic」: no view, no epic filter. Also where a deleted view lands. */
+  const selectAllEpics = useCallback(() => {
+    setSelectedViewId(null);
+    setEpicFilter(NO_EPIC_FILTER);
+  }, []);
+
+  /**
+   * Keep the epic filter equal to the selected view's epics.
+   *
+   * One effect covers the three moments that matter: picking a row, the owner
+   * editing the view while it is open (both reactive through `views:list`), and
+   * restoring a selection from localStorage once the list has arrived. The
+   * signature guard is what makes it safe to run alongside the drop-stale-codes
+   * effect below — re-applying only when the *view* changed means a code the
+   * board dropped stays dropped instead of being written back every render.
+   *
+   * A selected view that is gone (deleted, or a stale stored id) falls back to
+   * 「全部 Epic」 by clearing the selection alone: the codes it produced are the
+   * reader's current filter, and yanking their columns away on load would be a
+   * surprise. Deleting from the dialog clears both, because there the reader
+   * asked for it.
+   */
+  const appliedView = useRef<string | null>(null);
+  useEffect(() => {
+    if (views === undefined) return;
+    if (selectedViewId === null) {
+      appliedView.current = null;
+      return;
+    }
+    const view = views.find((candidate) => candidate._id === selectedViewId);
+    if (!view) {
+      setSelectedViewId(null);
+      return;
+    }
+    const signature = `${view._id}:${view.epicCodes.join(",")}`;
+    if (appliedView.current === signature) return;
+    appliedView.current = signature;
+    setEpicFilter(new Set(view.epicCodes));
+  }, [views, selectedViewId]);
+
+  /**
+   * Ticking the Epic 篩選 by hand leaves the view.
+   *
+   * The view was a preset; editing what it produced means the reader is looking
+   * at something of their own now, and the sidebar should stop claiming
+   * otherwise. Nothing is written back to the view — a saved board changes only
+   * in its dialog.
+   */
+  const changeEpicFilter = useCallback((next: EpicFilter) => {
+    setEpicFilter(next);
+    setSelectedViewId(null);
+  }, []);
 
   // Offer exactly the assignees present in the loaded window, so the menu can
   // never list someone with nothing to show. `null` covers unassigned tickets.
@@ -570,19 +651,21 @@ export function BoardApp() {
         >
           <div className="flex h-dvh flex-col">
             <BoardHeader
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((open) => !open)}
               search={search}
               onSearchChange={setSearch}
               epicFilter={epicFilter}
-            onEpicFilterChange={setEpicFilter}
-            epicOptions={epicOptions}
-            statusFilter={statusFilter}
+              onEpicFilterChange={changeEpicFilter}
+              epicOptions={epicOptions}
+              statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
               assigneeFilter={assigneeFilter}
               onAssigneeFilterChange={setAssigneeFilter}
               assigneeOptions={assigneeOptions}
               onReset={() => {
                 setSearch("");
-                setEpicFilter(NO_EPIC_FILTER);
+                selectAllEpics();
                 setStatusFilter(NO_STATUS_FILTER);
                 setAssigneeFilter(NO_ASSIGNEE_FILTER);
               }}
@@ -590,59 +673,75 @@ export function BoardApp() {
               totalCount={board?.tickets.length ?? 0}
             />
 
-            {/* relative: the update notice floats against this box, which starts
-              right below the header, so it needs no header-height constant. */}
-          <main className="relative min-h-0 flex-1 p-4 md:p-6">
-            <UpdateNotice />
-              <div
-                ref={scrollerRef}
-                onScroll={handleScroll}
-                className="h-full overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm"
-              >
-                {board === undefined ? (
-                  <BoardStatus>載入中...</BoardStatus>
-                ) : board.epics.length === 0 ? (
-                  <BoardStatus>
-                    尚無資料。執行{" "}
-                    <code className="font-mono">npm run import -- data/&lt;檔名&gt;.json</code>{" "}
-                    匯入看板內容。
-                  </BoardStatus>
-                ) : (
-                  <>
-                    {board.hasOlder &&
-                      (loadingOlder ? (
-                        <div className="flex items-center justify-center gap-2 border-b border-slate-100 py-2 text-xs text-slate-400">
-                          <Loader2 className="size-3 animate-spin" aria-hidden />
-                          載入更早的週次...
-                        </div>
-                      ) : (
-                        // A button, not just a hint: the board opens at scrollTop 0,
-                        // where scrolling up fires no event, so the gesture alone
-                        // would leave the reader unable to reach older weeks at all.
-                        <button
-                          type="button"
-                          onClick={loadOlder}
-                          className="w-full border-b border-slate-100 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
-                        >
-                          載入更早的週次
-                        </button>
-                      ))}
-                    <BoardMatrix
-                      // Filtered epics, not all of them: an epic is a column, so
-                      // unticking one takes its whole column out and the grid
-                      // re-flows to the width of what is left.
-                      epics={visibleEpics}
-                      checkpoints={board.checkpoints}
-                      tickets={gridTickets}
-                      today={today}
-                      onThisWeek={() =>
-                        scrollToCurrentWeek(scrollerRef.current, "smooth")
-                      }
-                    />
-                  </>
-                )}
-              </div>
-            </main>
+            {/* The header stays full width; the sidebar sits beside the board
+                below it, so collapsing it gives the matrix the whole row. */}
+            <div className="flex min-h-0 flex-1">
+              {sidebarOpen && (
+                <ViewSidebar
+                  views={views}
+                  selectedViewId={selectedViewId}
+                  onSelectAll={selectAllEpics}
+                  onSelect={(view) => setSelectedViewId(view._id)}
+                  onCreate={() => setEditingView({ mode: "create" })}
+                  onEdit={(view) => setEditingView({ mode: "edit", view })}
+                />
+              )}
+
+              {/* relative: the update notice floats against this box, which
+                  starts right below the header, so it needs no header-height
+                  constant. */}
+              <main className="relative min-h-0 min-w-0 flex-1 p-4 md:p-6">
+                <UpdateNotice />
+                <div
+                  ref={scrollerRef}
+                  onScroll={handleScroll}
+                  className="h-full overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm"
+                >
+                  {board === undefined ? (
+                    <BoardStatus>載入中...</BoardStatus>
+                  ) : board.epics.length === 0 ? (
+                    <BoardStatus>
+                      尚無資料。執行{" "}
+                      <code className="font-mono">npm run import -- data/&lt;檔名&gt;.json</code>{" "}
+                      匯入看板內容。
+                    </BoardStatus>
+                  ) : (
+                    <>
+                      {board.hasOlder &&
+                        (loadingOlder ? (
+                          <div className="flex items-center justify-center gap-2 border-b border-slate-100 py-2 text-xs text-slate-400">
+                            <Loader2 className="size-3 animate-spin" aria-hidden />
+                            載入更早的週次...
+                          </div>
+                        ) : (
+                          // A button, not just a hint: the board opens at scrollTop 0,
+                          // where scrolling up fires no event, so the gesture alone
+                          // would leave the reader unable to reach older weeks at all.
+                          <button
+                            type="button"
+                            onClick={loadOlder}
+                            className="w-full border-b border-slate-100 py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                          >
+                            載入更早的週次
+                          </button>
+                        ))}
+                      <BoardMatrix
+                        // Filtered epics, not all of them: an epic is a column, so
+                        // unticking one takes its whole column out and the grid
+                        // re-flows to the width of what is left.
+                        epics={visibleEpics}
+                        checkpoints={board.checkpoints}
+                        tickets={gridTickets}
+                        today={today}
+                        onThisWeek={() =>
+                          scrollToCurrentWeek(scrollerRef.current, "smooth")
+                        }
+                      />
+                    </>
+                  )}
+                </div>
+              </main>
+            </div>
 
             {moveError && (
               <p className="border-t border-rose-200 bg-rose-50 px-6 py-2 text-xs text-rose-700">
@@ -675,6 +774,38 @@ export function BoardApp() {
         {/* Outside the DndContext: the assistant has nothing to do with dragging,
             and its executor has to keep running while a card is in the air. */}
         <BoardAssistant />
+
+        {editingView && (
+          <ViewDialog
+            // Remount per target, so the fields start from the view being
+            // opened rather than from whatever was typed last.
+            key={editingView.mode === "edit" ? editingView.view._id : "create"}
+            target={editingView}
+            epicOptions={epicOptions}
+            onClose={() => setEditingView(null)}
+            onSubmit={async (values) => {
+              if (editingView.mode === "create") {
+                // Select what was just saved: pressing 建立 is also "show me
+                // this board", and the effect above applies its epics.
+                setSelectedViewId(await createView({ auth, ...values }));
+                return;
+              }
+              await updateView({
+                auth,
+                viewId: editingView.view._id,
+                ...values,
+              });
+            }}
+            onDelete={async () => {
+              if (editingView.mode !== "edit") return;
+              const viewId = editingView.view._id;
+              await removeView({ auth, viewId });
+              // Deleting what you are looking through: fall all the way back,
+              // columns included. `views:list` drops the row on its own.
+              if (viewId === selectedViewId) selectAllEpics();
+            }}
+          />
+        )}
 
         {editing && (
           <TicketDialog
